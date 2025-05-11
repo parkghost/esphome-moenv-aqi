@@ -1,0 +1,175 @@
+substitutions:
+  timezone: Asia/Taipei
+  default_site_name: 永和
+
+external_components:
+  - source: components
+
+logger:
+  level: DEBUG
+
+esphome:
+  name: moenv-aqi-example
+  friendly_name: Moenv AQI Example
+
+esp32:
+  board: esp32-c3-devkitm-1
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  on_connect:
+    - delay: 2s
+    - component.update: moenv_aqi_id
+
+api:
+
+web_server:
+  version: 3
+  port: 80
+
+globals:
+  - id: initial
+    type: bool
+    initial_value: "false"
+
+time:
+  - platform: sntp
+    id: esp_time
+    timezone: $timezone
+    on_time:
+      - cron: "00 15 * * * *"
+        then:
+          - script.execute: update_aqi
+    on_time_sync:
+      then:
+        - lambda: |-
+            if (!id(initial)) {
+              id(update_aqi).execute();
+              id(initial) = true;
+            }
+
+moenv_aqi:
+  - api_key: !secret moenv_api_key
+    id: moenv_aqi_id
+    site_name: !lambda return id(site_name).state;
+    on_data_change:
+      - lambda: |-
+          auto time = id(esp_time).now();
+          // check publish time is within 90 minutes
+          if (data.validate(time, 90)) {
+            ESP_LOGI("moenv_aqi", "Site Name: %s", data.site_name.c_str());
+            ESP_LOGI("moenv_aqi", "County: %s", data.county.c_str());
+            ESP_LOGI("moenv_aqi", "AQI: %d", data.aqi);
+            ESP_LOGI("moenv_aqi", "Pollutant: %s", data.pollutant.c_str());
+            ESP_LOGI("moenv_aqi", "Status: %s", data.status.c_str());
+            ESP_LOGI("moenv_aqi", "SO2: %.2f", data.so2);
+            ESP_LOGI("moenv_aqi", "CO: %.2f", data.co);
+            ESP_LOGI("moenv_aqi", "O3: %d", data.o3);
+            ESP_LOGI("moenv_aqi", "O3 8hr: %d", data.o3_8hr);
+            ESP_LOGI("moenv_aqi", "PM10: %d", data.pm10);
+            ESP_LOGI("moenv_aqi", "PM2.5: %d", data.pm2_5);
+            ESP_LOGI("moenv_aqi", "NO2: %d", data.no2);
+            ESP_LOGI("moenv_aqi", "NOx: %d", data.nox);
+            ESP_LOGI("moenv_aqi", "NO: %.2f", data.no);
+            ESP_LOGI("moenv_aqi", "Wind Speed: %.2f", data.wind_speed);
+            ESP_LOGI("moenv_aqi", "Wind Direction: %d", data.wind_direc);
+            ESP_LOGI("moenv_aqi", "Publish Time: %s", data.publish_time.c_str());
+            ESP_LOGI("moenv_aqi", "CO 8hr: %.2f", data.co_8hr);
+            ESP_LOGI("moenv_aqi", "PM2.5 Avg: %.2f", data.pm2_5_avg);
+            ESP_LOGI("moenv_aqi", "PM10 Avg: %d", data.pm10_avg);
+            ESP_LOGI("moenv_aqi", "SO2 Avg: %.2f", data.so2_avg);
+            ESP_LOGI("moenv_aqi", "Longitude: %.6f", data.longitude);
+            ESP_LOGI("moenv_aqi", "Latitude: %.6f", data.latitude);
+            ESP_LOGI("moenv_aqi", "Site ID: %d", data.site_id);
+          } else {
+            ESP_LOGI("moenv_aqi", "Data is not valid");
+          }
+
+sensor:
+  - platform: moenv_aqi
+    aqi:
+      name: "AQI"
+    so2:
+      name: "SO2"
+    co:
+      name: "CO"
+    "no":
+      name: "NO"
+    wind_speed:
+      name: "Wind Speed"
+    co_8hr:
+      name: "CO 8hr"
+    pm2_5_avg:
+      name: "PM2.5 Avg"
+    so2_avg:
+      name: "SO2 Avg"
+    o3:
+      name: "O3"
+    o3_8hr:
+      name: "O3 8hr"
+    pm10:
+      name: "PM10"
+    pm2_5:
+      name: "PM2.5"
+    no2:
+      name: "NO2"
+    nox:
+      name: "NOx"
+    wind_direc:
+      name: "Wind Direction"
+    pm10_avg:
+      name: "PM10 Avg"
+    site_id:
+      name: "Site ID"
+    longitude:
+      name: "Longitude"
+    latitude:
+      name: "Latitude"
+
+text_sensor:
+  - platform: moenv_aqi
+    site_name:
+      name: "Site Name"
+    county:
+      name: "County"
+    pollutant:
+      name: "Pollutant"
+    status:
+      name: "Status"
+    publish_time:
+      name: "Publish Time"
+    last_updated:
+      name: "Last Updated"
+    last_success:
+      name: "Last Success"
+    last_error:
+      name: "Last Error"
+
+text:
+  - platform: template
+    id: site_name
+    name: "Site Name"
+    optimistic: true
+    min_length: 0
+    max_length: 20
+    mode: text
+    restore_value: true
+    initial_value: $default_site_name
+    entity_category: config
+
+script:
+  - id: update_aqi
+    then:
+      if:
+        condition:
+          - time.has_time:
+          - wifi.connected:
+        then:
+          - component.update: moenv_aqi_id
+
+button:
+  - platform: template
+    name: "Update"
+    on_press:
+      - script.execute: update_aqi
