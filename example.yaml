@@ -56,7 +56,7 @@ moenv_aqi:
     on_data_change:
       - lambda: |-
           auto time = id(esp_time).now();
-          // check publish time is within 90 minutes
+          // Check publish time is within 90 minutes
           if (data.validate(time, 90)) {
             ESP_LOGI("moenv_aqi", "Site Name: %s", data.site_name.c_str());
             ESP_LOGI("moenv_aqi", "County: %s", data.county.c_str());

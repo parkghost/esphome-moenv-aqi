@@ -1,6 +1,7 @@
 #include "moenv_aqi.h"
 
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 #include <algorithm>
 #include <cctype>
@@ -268,7 +269,7 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
     return false;
   }
 
-  DynamicJsonDocument doc(1024);
+  JsonDocument doc;
 
   // Iterate through each record in the array
   bool found = false;
@@ -281,12 +282,11 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
     }
 
     // Extract the sitename
-    if (!doc.containsKey("sitename")) {
+    JsonVariant sitename_json = doc["sitename"];
+    if (!sitename_json) {
       ESP_LOGW(TAG, "Could not find 'sitename' field, skipping record");
       continue;
     }
-
-    JsonVariant sitename_json = doc["sitename"];
     if (sitename_json.isNull()) {
       ESP_LOGW(TAG, "'sitename' field is null, skipping record");
       continue;
@@ -335,7 +335,7 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
       // Iterate mappings, enforce required, and apply setters
       for (auto &m : mappings) {
         JsonVariant val = doc[m.key];  // cache variant lookup
-        if (val.isNull()) {
+        if (!val || val.isNull()) {
           if (m.required) {
             ESP_LOGE(TAG, "Required field '%s' missing or null, record invalid", m.key);
             return false;

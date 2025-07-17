@@ -36,7 +36,7 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 ```yaml
 external_components:
   - source: github://parkghost/esphome-moenv-aqi
-    components: [ moenv_aqi ]
+    components: [moenv_aqi]
 
 time:
   - platform: sntp
@@ -114,7 +114,7 @@ text_sensor:
 ```cpp
 auto data = id(moenv_aqi_id).get_data();
 auto time = id(esp_time).now();
-// check publish time is within 90 minutes
+// Check publish time is within 90 minutes
 if (data.validate(time, 90)) {
   ESP_LOGI("moenv_aqi", "Site Name: %s", data.site_name.c_str());
   ESP_LOGI("moenv_aqi", "County: %s", data.county.c_str());
