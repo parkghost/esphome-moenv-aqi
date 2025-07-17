@@ -4,10 +4,13 @@
 #include <ArduinoJson.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <ctime>
 #include <functional>
+#include <memory>
 #include <set>
+#include <vector>
 
 #include "esphome/components/watchdog/watchdog.h"
 #include "esphome/core/helpers.h"
@@ -16,8 +19,10 @@
 namespace esphome {
 namespace moenv_aqi {
 
-static const size_t MAX_RECORDS_CHECKED = 500;
-uint32_t global_moenv_aqi_id = 1911044085ULL;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static constexpr size_t MAX_RECORDS_CHECKED = 500;
+static constexpr size_t URL_BASE_RESERVE_SIZE = 256;
+static constexpr size_t URL_OFFSET_RESERVE_SIZE = 20;
+uint32_t global_moenv_aqi_id = 1911044085ULL;
 
 // Setup priority
 float MoenvAQI::get_setup_priority() const { return setup_priority::LATE; }
@@ -156,15 +161,23 @@ bool MoenvAQI::send_request_() {
   size_t limit = limit_.value();
 
   std::string limit_parm;
+  limit_parm.reserve(32);
   if (limit > 0) {
-    limit_parm = "&limit=" + std::to_string(limit);
+    limit_parm = "&limit=";
+    limit_parm += std::to_string(limit);
   }
 
   bool found = false;
   Record record;
   int total = -1;
 
-  std::string url_base = "https://data.moenv.gov.tw/api/v2/aqx_p_432?language=" + language_.value() + "&api_key=" + api_key_.value() + limit_parm;
+  std::string url_base;
+  url_base.reserve(URL_BASE_RESERVE_SIZE);
+  url_base = "https://data.moenv.gov.tw/api/v2/aqx_p_432?language=";
+  url_base += language_.value();
+  url_base += "&api_key=";
+  url_base += api_key_.value();
+  url_base += limit_parm;
 
   HTTPClient http;
   http.useHTTP10(true);
@@ -172,14 +185,18 @@ bool MoenvAQI::send_request_() {
   http.setTimeout(http_timeout_.value());
   http.addHeader("Content-Type", "application/json");
 
-  size_t total_checked = 0;  // safeguard counter
+  size_t total_checked = 0;
   while (!found) {
     if (total_checked >= MAX_RECORDS_CHECKED) {
       ESP_LOGW(TAG, "Safeguard: checked over %u records, aborting search.", MAX_RECORDS_CHECKED);
       break;
     }
     total_checked += limit;
-    std::string url = url_base + "&offset=" + std::to_string(offset);
+    std::string url;
+    url.reserve(url_base.length() + URL_OFFSET_RESERVE_SIZE);
+    url = url_base;
+    url += "&offset=";
+    url += std::to_string(offset);
 
     http.begin(url.c_str());
     ESP_LOGD(TAG, "Sending query: %s", url.c_str());
@@ -192,7 +209,33 @@ bool MoenvAQI::send_request_() {
     if (http_code == HTTP_CODE_OK) {
       App.feed_wdt();
       ESP_LOGD(TAG, "Looking for site: %s", site_name_.value().c_str());
-      bool result = process_response_(http.getStream(), record, total);
+      
+      // Try buffered stream parsing first (more robust)
+      bool result = false;
+      Stream& stream = http.getStream();
+
+      BufferedStream bufferedStream(stream, 1024); // 1KB buffer
+      ESP_LOGD(TAG, "Using BufferedStream (1KB buffer)");
+      
+      if (bufferedStream.isHealthy()) {
+        result = process_response_(bufferedStream, record, total);
+        ESP_LOGD(TAG, "BufferedStream processed %zu bytes", bufferedStream.getBytesRead());
+        
+        // Log buffer utilization for optimization insights
+        if (bufferedStream.getBufferUtilization() > 0.8f) {
+          ESP_LOGD(TAG, "High buffer utilization: %.1f%% - consider increasing buffer size", 
+                   bufferedStream.getBufferUtilization() * 100.0f);
+        }
+      } else {
+        ESP_LOGW(TAG, "BufferedStream not healthy, using direct stream");
+        result = process_response_(stream, record, total);
+      }
+      
+      // Drain any remaining buffered data to avoid SSL state issues
+      if (bufferedStream.isHealthy()) {
+        bufferedStream.drainBuffer();
+      }
+
       http.end();
       ESP_LOGD(TAG, "After json parse: free heap:%u, max block:%u", ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
@@ -254,7 +297,7 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
     return false;
   }
 
-  String target_site_name = String(site_name_.value().c_str());
+  const std::string_view target_site_name = site_name_.value();
 
   // Find the "records" array
   if (!stream.find("\"records\": [")) {
@@ -292,52 +335,46 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
       continue;
     }
 
-    String sitename = sitename_json.as<String>();
+    const std::string sitename = sitename_json.as<std::string>();
     ESP_LOGV(TAG, "sitename: %s", sitename.c_str());
 
     // Check if this is the target site
     if (sitename == target_site_name) {
-      ESP_LOGD(TAG, "Found target site: %s", target_site_name.c_str());
+      ESP_LOGD(TAG, "Found target site: %s", target_site_name.data());
 
-      // Define schema-driven field mappings
-      struct FieldMapping {
-        const char *key;
-        bool required;
-        std::function<void(Record &, JsonVariant &)> setter;
-      };
-      static const FieldMapping mappings[] = {
-          {FIELD_SITENAME, true, [](Record &r, JsonVariant &v) { r.site_name = v.as<String>().c_str(); }},
-          {FIELD_COUNTY, false, [](Record &r, JsonVariant &v) { r.county = v.as<String>().c_str(); }},
-          {FIELD_AQI, true, [](Record &r, JsonVariant &v) { r.aqi = v.as<int>(); }},
-          {FIELD_POLLUTANT, false, [](Record &r, JsonVariant &v) { r.pollutant = v.as<String>().c_str(); }},
-          {FIELD_STATUS, false, [](Record &r, JsonVariant &v) { r.status = v.as<String>().c_str(); }},
-          {FIELD_SO2, false, [](Record &r, JsonVariant &v) { r.so2 = v.as<float>(); }},
-          {FIELD_CO, false, [](Record &r, JsonVariant &v) { r.co = v.as<float>(); }},
-          {FIELD_O3, false, [](Record &r, JsonVariant &v) { r.o3 = v.as<int>(); }},
-          {FIELD_O3_8HR, false, [](Record &r, JsonVariant &v) { r.o3_8hr = v.as<int>(); }},
-          {FIELD_PM10, false, [](Record &r, JsonVariant &v) { r.pm10 = v.as<int>(); }},
-          {FIELD_PM25, false, [](Record &r, JsonVariant &v) { r.pm2_5 = v.as<int>(); }},
-          {FIELD_NO2, false, [](Record &r, JsonVariant &v) { r.no2 = v.as<int>(); }},
-          {FIELD_NOX, false, [](Record &r, JsonVariant &v) { r.nox = v.as<int>(); }},
-          {FIELD_NO, false, [](Record &r, JsonVariant &v) { r.no = v.as<float>(); }},
-          {FIELD_WIND_SPEED, false, [](Record &r, JsonVariant &v) { r.wind_speed = v.as<float>(); }},
-          {FIELD_WIND_DIREC, false, [](Record &r, JsonVariant &v) { r.wind_direc = v.as<int>(); }},
-          {FIELD_PUBLISH_TIME, true, [](Record &r, JsonVariant &v) { r.publish_time = v.as<String>().c_str(); }},
-          {FIELD_CO_8HR, false, [](Record &r, JsonVariant &v) { r.co_8hr = v.as<float>(); }},
-          {FIELD_PM25_AVG, false, [](Record &r, JsonVariant &v) { r.pm2_5_avg = v.as<float>(); }},
-          {FIELD_PM10_AVG, false, [](Record &r, JsonVariant &v) { r.pm10_avg = v.as<int>(); }},
-          {FIELD_SO2_AVG, false, [](Record &r, JsonVariant &v) { r.so2_avg = v.as<float>(); }},
-          {FIELD_LONGITUDE, false, [](Record &r, JsonVariant &v) { r.longitude = v.as<double>(); }},
-          {FIELD_LATITUDE, false, [](Record &r, JsonVariant &v) { r.latitude = v.as<double>(); }},
-          {FIELD_SITEID, false, [](Record &r, JsonVariant &v) { r.site_id = v.as<int>(); }},
+      static const std::array mappings{
+          FieldMapping{FIELD_SITENAME, true, [](Record &r, JsonVariant &v) { r.site_name = v.as<std::string>(); }},
+          FieldMapping{FIELD_COUNTY, false, [](Record &r, JsonVariant &v) { r.county = v.as<std::string>(); }},
+          FieldMapping{FIELD_AQI, true, [](Record &r, JsonVariant &v) { r.aqi = v.as<int>(); }},
+          FieldMapping{FIELD_POLLUTANT, false, [](Record &r, JsonVariant &v) { r.pollutant = v.as<std::string>(); }},
+          FieldMapping{FIELD_STATUS, false, [](Record &r, JsonVariant &v) { r.status = v.as<std::string>(); }},
+          FieldMapping{FIELD_SO2, false, [](Record &r, JsonVariant &v) { r.so2 = v.as<float>(); }},
+          FieldMapping{FIELD_CO, false, [](Record &r, JsonVariant &v) { r.co = v.as<float>(); }},
+          FieldMapping{FIELD_O3, false, [](Record &r, JsonVariant &v) { r.o3 = v.as<int>(); }},
+          FieldMapping{FIELD_O3_8HR, false, [](Record &r, JsonVariant &v) { r.o3_8hr = v.as<int>(); }},
+          FieldMapping{FIELD_PM10, false, [](Record &r, JsonVariant &v) { r.pm10 = v.as<int>(); }},
+          FieldMapping{FIELD_PM25, false, [](Record &r, JsonVariant &v) { r.pm2_5 = v.as<int>(); }},
+          FieldMapping{FIELD_NO2, false, [](Record &r, JsonVariant &v) { r.no2 = v.as<int>(); }},
+          FieldMapping{FIELD_NOX, false, [](Record &r, JsonVariant &v) { r.nox = v.as<int>(); }},
+          FieldMapping{FIELD_NO, false, [](Record &r, JsonVariant &v) { r.no = v.as<float>(); }},
+          FieldMapping{FIELD_WIND_SPEED, false, [](Record &r, JsonVariant &v) { r.wind_speed = v.as<float>(); }},
+          FieldMapping{FIELD_WIND_DIREC, false, [](Record &r, JsonVariant &v) { r.wind_direc = v.as<int>(); }},
+          FieldMapping{FIELD_PUBLISH_TIME, true, [](Record &r, JsonVariant &v) { r.publish_time = v.as<std::string>(); }},
+          FieldMapping{FIELD_CO_8HR, false, [](Record &r, JsonVariant &v) { r.co_8hr = v.as<float>(); }},
+          FieldMapping{FIELD_PM25_AVG, false, [](Record &r, JsonVariant &v) { r.pm2_5_avg = v.as<float>(); }},
+          FieldMapping{FIELD_PM10_AVG, false, [](Record &r, JsonVariant &v) { r.pm10_avg = v.as<int>(); }},
+          FieldMapping{FIELD_SO2_AVG, false, [](Record &r, JsonVariant &v) { r.so2_avg = v.as<float>(); }},
+          FieldMapping{FIELD_LONGITUDE, false, [](Record &r, JsonVariant &v) { r.longitude = v.as<double>(); }},
+          FieldMapping{FIELD_LATITUDE, false, [](Record &r, JsonVariant &v) { r.latitude = v.as<double>(); }},
+          FieldMapping{FIELD_SITEID, false, [](Record &r, JsonVariant &v) { r.site_id = v.as<int>(); }},
       };
 
-      // Iterate mappings, enforce required, and apply setters
-      for (auto &m : mappings) {
-        JsonVariant val = doc[m.key];  // cache variant lookup
-        if (!val || val.isNull()) {
+      std::span<const FieldMapping> mapping_span{mappings};
+      for (const auto &m : mapping_span) {
+        JsonVariant val = doc[m.key];
+        if (val.isNull()) {
           if (m.required) {
-            ESP_LOGE(TAG, "Required field '%s' missing or null, record invalid", m.key);
+            ESP_LOGE(TAG, "Required field '%s' missing or null, record invalid", m.key.data());
             return false;
           }
           continue;
@@ -345,8 +382,7 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
         m.setter(record, val);
       }
 
-      // Additional validation checks
-      if (record.aqi < 0) {
+      if (record.aqi < 0 || record.aqi > 500) {
         ESP_LOGE(TAG, "Invalid AQI value: %d", record.aqi);
         return false;
       }
@@ -354,10 +390,8 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
         ESP_LOGE(TAG, "Invalid coordinates: lat=%.6f lon=%.6f", record.latitude, record.longitude);
         return false;
       }
-      doc.clear();
       return true;
     }
-    doc.clear();
   } while (!found && stream.findUntil(",", "]"));
   return found;
 }

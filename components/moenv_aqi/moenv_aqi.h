@@ -1,8 +1,15 @@
 #pragma once
 
+#include <concepts>
+#include <functional>
 #include <set>
+#include <span>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
+#include <algorithm>
 
 #include "esphome.h"
 #include "esphome/components/sensor/sensor.h"
@@ -18,32 +25,266 @@ namespace moenv_aqi {
 
 static const char *const TAG = "moenv_aqi";
 
-static const char *const FIELD_SITENAME = "sitename";
-static const char *const FIELD_COUNTY = "county";
-static const char *const FIELD_AQI = "aqi";
-static const char *const FIELD_POLLUTANT = "pollutant";
-static const char *const FIELD_STATUS = "status";
-static const char *const FIELD_SO2 = "so2";
-static const char *const FIELD_CO = "co";
-static const char *const FIELD_O3 = "o3";
-static const char *const FIELD_O3_8HR = "o3_8hr";
-static const char *const FIELD_PM10 = "pm10";
-static const char *const FIELD_PM25 = "pm2.5";
-static const char *const FIELD_NO2 = "no2";
-static const char *const FIELD_NOX = "nox";
-static const char *const FIELD_NO = "no";
-static const char *const FIELD_WIND_SPEED = "wind_speed";
-static const char *const FIELD_WIND_DIREC = "wind_direc";
-static const char *const FIELD_PUBLISH_TIME = "publishtime";
-static const char *const FIELD_CO_8HR = "co_8hr";
-static const char *const FIELD_PM25_AVG = "pm2.5_avg";
-static const char *const FIELD_PM10_AVG = "pm10_avg";
-static const char *const FIELD_SO2_AVG = "so2_avg";
-static const char *const FIELD_LONGITUDE = "longitude";
-static const char *const FIELD_LATITUDE = "latitude";
-static const char *const FIELD_SITEID = "siteid";
+static constexpr std::string_view FIELD_SITENAME = "sitename";
+static constexpr std::string_view FIELD_COUNTY = "county";
+static constexpr std::string_view FIELD_AQI = "aqi";
+static constexpr std::string_view FIELD_POLLUTANT = "pollutant";
+static constexpr std::string_view FIELD_STATUS = "status";
+static constexpr std::string_view FIELD_SO2 = "so2";
+static constexpr std::string_view FIELD_CO = "co";
+static constexpr std::string_view FIELD_O3 = "o3";
+static constexpr std::string_view FIELD_O3_8HR = "o3_8hr";
+static constexpr std::string_view FIELD_PM10 = "pm10";
+static constexpr std::string_view FIELD_PM25 = "pm2.5";
+static constexpr std::string_view FIELD_NO2 = "no2";
+static constexpr std::string_view FIELD_NOX = "nox";
+static constexpr std::string_view FIELD_NO = "no";
+static constexpr std::string_view FIELD_WIND_SPEED = "wind_speed";
+static constexpr std::string_view FIELD_WIND_DIREC = "wind_direc";
+static constexpr std::string_view FIELD_PUBLISH_TIME = "publishtime";
+static constexpr std::string_view FIELD_CO_8HR = "co_8hr";
+static constexpr std::string_view FIELD_PM25_AVG = "pm2.5_avg";
+static constexpr std::string_view FIELD_PM10_AVG = "pm10_avg";
+static constexpr std::string_view FIELD_SO2_AVG = "so2_avg";
+static constexpr std::string_view FIELD_LONGITUDE = "longitude";
+static constexpr std::string_view FIELD_LATITUDE = "latitude";
+static constexpr std::string_view FIELD_SITEID = "siteid";
 
 static const int MAX_FUTURE_PUBLISH_TIME_MINUTES = 10;
+
+
+// Buffered stream class that pre-reads data into internal buffer
+class BufferedStream : public Stream {
+ public:
+  static constexpr size_t MIN_BUFFER_SIZE = 64;
+  static constexpr size_t MAX_BUFFER_SIZE = 4096;
+  static constexpr size_t DEFAULT_BUFFER_SIZE = 512;
+  
+  BufferedStream(Stream& stream, size_t bufferSize = DEFAULT_BUFFER_SIZE) 
+    : stream_(stream), bytes_read_(0), buffer_pos_(0), buffer_len_(0) {
+    
+    // Validate and clamp buffer size
+    if (bufferSize < MIN_BUFFER_SIZE) {
+      ESP_LOGW(TAG, "Buffer size %zu too small, using minimum %zu", bufferSize, MIN_BUFFER_SIZE);
+      bufferSize = MIN_BUFFER_SIZE;
+    } else if (bufferSize > MAX_BUFFER_SIZE) {
+      ESP_LOGW(TAG, "Buffer size %zu too large, using maximum %zu", bufferSize, MAX_BUFFER_SIZE);
+      bufferSize = MAX_BUFFER_SIZE;
+    }
+    
+    buffer_.reserve(bufferSize);
+    buffer_.resize(bufferSize);
+    if (buffer_.size() != bufferSize) {
+      ESP_LOGE(TAG, "Failed to allocate buffer for BufferedStream (requested: %zu, got: %zu)", 
+               bufferSize, buffer_.size());
+      buffer_.clear();
+    } else {
+      ESP_LOGD(TAG, "BufferedStream created with buffer size: %zu", buffer_.size());
+    }
+  }
+  
+  // Explicitly delete copy operations to prevent issues
+  BufferedStream(const BufferedStream&) = delete;
+  BufferedStream& operator=(const BufferedStream&) = delete;
+  
+  // Allow move operations
+  BufferedStream(BufferedStream&&) = default;
+  BufferedStream& operator=(BufferedStream&&) = default;
+  
+  ~BufferedStream() = default;
+  
+  // Simple health check based on buffer availability
+  bool isHealthy() const { return !buffer_.empty(); }
+  
+  int available() override {
+    // Return buffered data + underlying stream data
+    return (buffer_len_ - buffer_pos_) + stream_.available();
+  }
+  
+  int read() override {
+    // If no buffer allocated, delegate to underlying stream
+    if (buffer_.empty()) {
+      int byte = stream_.read();
+      if (byte != -1) {
+        bytes_read_++;
+      }
+      return byte;
+    }
+    
+    // If buffer is empty, try to fill it
+    if (buffer_pos_ >= buffer_len_) {
+      if (!fillBuffer()) {
+        // Fall back to direct stream reading
+        int byte = stream_.read();
+        if (byte != -1) {
+          bytes_read_++;
+        }
+        return byte;
+      }
+    }
+    
+    // Return from buffer if available
+    if (buffer_pos_ < buffer_len_) {
+      int byte = buffer_[buffer_pos_++];
+      bytes_read_++;
+      
+      // Only log on significant milestones or special debug mode
+      #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+      if (bytes_read_ % 500 == 0 || (byte == '{' && bytes_read_ < 50) || 
+          (byte == '}' && bytes_read_ > 100)) {
+        ESP_LOGVV(TAG, "Read byte %d: 0x%02X ('%c') at position %zu", 
+                  byte, byte, (byte >= 32 && byte <= 126) ? (char)byte : '.', bytes_read_);
+      }
+      #endif
+      
+      return byte;
+    }
+    
+    return -1; // No data available
+  }
+  
+  int peek() override {
+    // If buffer is empty, try to fill it
+    if (buffer_pos_ >= buffer_len_) {
+      fillBuffer();
+    }
+    
+    // Return from buffer if available
+    if (buffer_pos_ < buffer_len_) {
+      return buffer_[buffer_pos_];
+    }
+    
+    return -1; // No data available
+  }
+  
+  void flush() override { stream_.flush(); }
+  size_t write(uint8_t byte) override { return stream_.write(byte); }
+  
+  // Delegate other important methods (bypass buffer for these operations)
+  void setTimeout(unsigned long timeout) { stream_.setTimeout(timeout); }
+  bool find(char* target) { 
+    ESP_LOGV(TAG, "find() bypassing buffer, delegating to underlying stream");
+    return stream_.find(target); 
+  }
+  bool findUntil(char* target, char* terminator) { 
+    ESP_LOGV(TAG, "findUntil() bypassing buffer, delegating to underlying stream");
+    return stream_.findUntil(target, terminator); 
+  }
+  
+  String readStringUntil(char terminator) {
+    String result;
+    result.reserve(128); // Pre-allocate reasonable capacity
+    
+    int c;
+    while ((c = read()) != -1) {
+      if (c == terminator) break;
+      result += (char)c;
+      
+      // Prevent runaway strings
+      if (result.length() > 1024) {
+        ESP_LOGW(TAG, "readStringUntil('%c') exceeded 1024 chars, truncating", terminator);
+        break;
+      }
+    }
+    
+    ESP_LOGV(TAG, "readStringUntil('%c') returned: %s (length: %d)", 
+             terminator, result.c_str(), result.length());
+    return result;
+  }
+  
+  size_t getBytesRead() const { return bytes_read_; }
+  size_t getBufferSize() const { return buffer_.size(); }
+  size_t getBufferedBytes() const { return buffer_len_ - buffer_pos_; }
+  
+  // Additional monitoring methods
+  float getBufferUtilization() const { 
+    return buffer_.empty() ? 0.0f : (float)buffer_len_ / (float)buffer_.size(); 
+  }
+  
+  bool hasBufferedData() const { return buffer_pos_ < buffer_len_; }
+  
+  // Debug information
+  void logBufferStats() const {
+    ESP_LOGD(TAG, "Buffer stats: size=%zu, pos=%zu, len=%zu, utilization=%.1f%%, healthy=%s", 
+             buffer_.size(), buffer_pos_, buffer_len_, 
+             getBufferUtilization() * 100.0f, isHealthy() ? "true" : "false");
+  }
+  
+  // Drain remaining buffered data to avoid SSL connection state issues
+  void drainBuffer() {
+    size_t remaining = buffer_len_ - buffer_pos_;
+    if (remaining > 0) {
+      ESP_LOGD(TAG, "Draining %d remaining bytes from buffer", remaining);
+      buffer_pos_ = buffer_len_; // Mark buffer as empty
+    }
+    
+    // Also drain any remaining data from underlying stream
+    static constexpr int DRAIN_LIMIT = 200;
+    int drained = 0;
+    while (stream_.available() && drained < DRAIN_LIMIT) {
+      int byte = stream_.read();
+      if (byte == -1) break;
+      drained++;
+    }
+    if (drained > 0) {
+      ESP_LOGD(TAG, "Drained %d bytes from underlying stream", drained);
+    }
+  }
+  
+ private:
+  bool fillBuffer() {
+    if (buffer_.empty()) {
+      // No buffer available, can't fill
+      return false;
+    }
+    
+    buffer_pos_ = 0;
+    buffer_len_ = 0;
+    
+    // Read data into buffer, but don't over-read to avoid SSL state issues
+    size_t available = stream_.available();
+    if (available == 0) {
+      return false; // No data to read
+    }
+    
+    // More efficient reading - read in chunks when possible
+    size_t read_limit = std::min(buffer_.size(), available);
+    
+    // Try to read data efficiently
+    size_t bytes_to_read = std::min(read_limit, buffer_.size());
+    
+    for (size_t i = 0; i < bytes_to_read; i++) {
+      int byte = stream_.read();
+      if (byte == -1) break;
+      buffer_[buffer_len_++] = static_cast<uint8_t>(byte);
+    }
+    
+    if (buffer_len_ > 0) {
+      #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+      ESP_LOGVV(TAG, "Filled buffer with %zu bytes (available: %zu)", buffer_len_, available);
+      #endif
+      return true;
+    }
+    
+    return false;
+  }
+  
+  Stream& stream_;
+  size_t bytes_read_;
+  std::vector<uint8_t> buffer_;
+  size_t buffer_pos_;  // Current position in buffer
+  size_t buffer_len_;  // Amount of data in buffer
+};
+
+
+// Forward declaration for FieldMapping
+struct Record;
+
+struct FieldMapping {
+  std::string_view key;
+  bool required;
+  std::function<void(Record &, JsonVariant &)> setter;
+};
 
 struct Record {
   std::string site_name;
@@ -107,13 +348,7 @@ struct Record {
     return true;
   }
 
-  bool operator==(const Record &rhs) const {
-    return site_name == rhs.site_name && county == rhs.county && aqi == rhs.aqi && pollutant == rhs.pollutant && status == rhs.status && so2 == rhs.so2 &&
-           co == rhs.co && o3 == rhs.o3 && o3_8hr == rhs.o3_8hr && pm10 == rhs.pm10 && pm2_5 == rhs.pm2_5 && no2 == rhs.no2 && nox == rhs.nox && no == rhs.no &&
-           wind_speed == rhs.wind_speed && wind_direc == rhs.wind_direc && publish_time == rhs.publish_time && co_8hr == rhs.co_8hr &&
-           pm2_5_avg == rhs.pm2_5_avg && pm10_avg == rhs.pm10_avg && so2_avg == rhs.so2_avg && longitude == rhs.longitude && latitude == rhs.latitude &&
-           site_id == rhs.site_id;
-  }
+  bool operator==(const Record &rhs) const = default;
 };
 
 class MoenvAQI : public PollingComponent {
