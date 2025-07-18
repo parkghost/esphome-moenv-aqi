@@ -390,6 +390,14 @@ class MoenvAQI : public PollingComponent {
   void set_http_timeout(V http_timeout) {
     http_timeout_ = http_timeout;
   }
+  template <typename V>
+  void set_retry_count(V retry_count) {
+    retry_count_ = retry_count;
+  }
+  template <typename V>
+  void set_retry_delay(V retry_delay) {
+    retry_delay_ = retry_delay;
+  }
 
   void set_time(time::RealTimeClock *rtc) { rtc_ = rtc; }
 
@@ -434,6 +442,8 @@ class MoenvAQI : public PollingComponent {
   TemplatableValue<uint32_t> http_connect_timeout_;
   TemplatableValue<uint32_t> http_timeout_;
   TemplatableValue<uint32_t> sensor_expiry_;
+  TemplatableValue<uint32_t> retry_count_;
+  TemplatableValue<uint32_t> retry_delay_;
   time::RealTimeClock *rtc_{nullptr};
 
   sensor::Sensor *aqi_{nullptr};
@@ -475,6 +485,7 @@ class MoenvAQI : public PollingComponent {
 
   bool validate_config_();
   bool send_request_();
+  bool send_request_with_retry_();
   void reset_site_data_();
   bool process_response_(Stream &stream, Record &record, int &total);
   bool check_changes_(const Record &new_data);

@@ -22,6 +22,8 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 * **watchdog_timeout** (Optional, Time, templatable): Timeout for the watchdog timer during the HTTP request. Defaults to `30s`.
 * **http_connect_timeout** (Optional, Time, templatable): Timeout for establishing the HTTP connection. Defaults to `10s`.
 * **http_timeout** (Optional, Time, templatable): Timeout for the TCP connection. Defaults to `10s`.
+* **retry_count** (Optional, integer, templatable): Number of retry attempts for failed HTTP requests. Defaults to `1`. Range: 0-5.
+* **retry_delay** (Optional, Time, templatable): Base delay between retry attempts. Uses exponential backoff with jitter. Defaults to `1s`.
 * **update_interval** (Optional, Time): How often to check for new data. Defaults to `never` (manual updates only).
 
 #### Automations
@@ -48,6 +50,8 @@ moenv_aqi:
     id: moenv_aqi_id
     site_name: "永和"
     update_interval: never
+    retry_count: 3
+    retry_delay: 1s
 
 sensor:
   - platform: moenv_aqi

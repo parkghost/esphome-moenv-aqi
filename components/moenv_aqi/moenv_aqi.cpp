@@ -68,7 +68,7 @@ void MoenvAQI::update() {
     reset_site_data_();
   }
 
-  if (send_request_()) {
+  if (send_request_with_retry_()) {
     this->status_clear_warning();
 
     this->last_site_name_ = site_name_.value();
@@ -109,6 +109,8 @@ void MoenvAQI::dump_config() {
   ESP_LOGCONFIG(TAG, "  Watchdog Timeout: %u ms", watchdog_timeout_.value());
   ESP_LOGCONFIG(TAG, "  HTTP Connect Timeout: %u ms", http_connect_timeout_.value());
   ESP_LOGCONFIG(TAG, "  HTTP Timeout: %u ms", http_timeout_.value());
+  ESP_LOGCONFIG(TAG, "  Retry Count: %u", retry_count_.value());
+  ESP_LOGCONFIG(TAG, "  Retry Delay: %u ms", retry_delay_.value());
   LOG_UPDATE_INTERVAL(this);
 }
 
@@ -276,6 +278,58 @@ bool MoenvAQI::send_request_() {
   return found;
 }
 
+// Send HTTP request with retry mechanism
+bool MoenvAQI::send_request_with_retry_() {
+  uint32_t retry_count = retry_count_.value();
+  uint32_t retry_delay = retry_delay_.value();
+  
+  // If retry count is 0, just make one attempt
+  if (retry_count == 0) {
+    return send_request_();
+  }
+  
+  for (uint32_t attempt = 0; attempt <= retry_count; ++attempt) {
+    if (attempt > 0) {
+      ESP_LOGW(TAG, "Retrying request (attempt %u/%u)", attempt + 1, retry_count + 1);
+      
+      // Calculate exponential backoff with jitter
+      uint32_t backoff_delay = retry_delay * (1 << (attempt - 1)); // Exponential backoff
+      uint32_t jitter = random() % 1000; // Add up to 1 second of jitter
+      uint32_t total_delay = backoff_delay + jitter;
+      
+      // Cap the delay to prevent excessive waiting
+      if (total_delay > 30000) { // Max 30 seconds
+        total_delay = 30000;
+      }
+      
+      ESP_LOGD(TAG, "Backoff delay: %u ms (base: %u ms, jitter: %u ms)", total_delay, backoff_delay, jitter);
+      
+      // Use non-blocking delay to avoid blocking the main loop
+      uint32_t delay_end = millis() + total_delay;
+      while (millis() < delay_end) {
+        App.feed_wdt();
+        delay(100); // Small delay to prevent busy waiting
+      }
+    }
+    
+    ESP_LOGD(TAG, "HTTP request attempt %u/%u", attempt + 1, retry_count + 1);
+    
+    if (send_request_()) {
+      if (attempt > 0) {
+        ESP_LOGI(TAG, "Request succeeded on attempt %u/%u", attempt + 1, retry_count + 1);
+      }
+      return true;
+    }
+    
+    if (attempt < retry_count) {
+      ESP_LOGW(TAG, "Request failed on attempt %u/%u, will retry", attempt + 1, retry_count + 1);
+    }
+  }
+  
+  ESP_LOGE(TAG, "Request failed after %u attempts", retry_count + 1);
+  return false;
+}
+
 // Process HTTP response
 bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
   // Get total records
@@ -297,7 +351,7 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
     return false;
   }
 
-  const std::string_view target_site_name = site_name_.value();
+  const std::string target_site_name = site_name_.value();
 
   // Find the "records" array
   if (!stream.find("\"records\": [")) {
@@ -340,7 +394,7 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
 
     // Check if this is the target site
     if (sitename == target_site_name) {
-      ESP_LOGD(TAG, "Found target site: %s", target_site_name.data());
+      ESP_LOGD(TAG, "Found target site: %s", target_site_name.c_str());
 
       static const std::array mappings{
           FieldMapping{FIELD_SITENAME, true, [](Record &r, JsonVariant &v) { r.site_name = v.as<std::string>(); }},
