@@ -487,7 +487,7 @@ class MoenvAQI : public PollingComponent {
   bool send_request_();
   bool send_request_with_retry_();
   void reset_site_data_();
-  bool process_response_(Stream &stream, Record &record, int &total);
+  bool process_response_(Stream &stream, Record &record, int &records_count);
   bool check_changes_(const Record &new_data);
   bool validate_record_();
   void publish_states_();

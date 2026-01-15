@@ -159,8 +159,10 @@ bool MoenvAQI::send_request_() {
 
   watchdog::WatchdogManager wdm(this->watchdog_timeout_.value());
 
-  size_t offset = last_successful_offset_;  // Start from the last known offset
+  const size_t start_offset = last_successful_offset_;  // Remember starting point for wrap-around
+  size_t offset = start_offset;
   size_t limit = limit_.value();
+  bool wrapped = false;  // Track if we've wrapped around to beginning
 
   std::string limit_parm;
   limit_parm.reserve(32);
@@ -171,7 +173,7 @@ bool MoenvAQI::send_request_() {
 
   bool found = false;
   Record record;
-  int total = -1;
+  int records_count = 0;
 
   std::string url_base;
   url_base.reserve(URL_BASE_RESERVE_SIZE);
@@ -220,17 +222,17 @@ bool MoenvAQI::send_request_() {
       ESP_LOGD(TAG, "Using BufferedStream (1KB buffer)");
       
       if (bufferedStream.isHealthy()) {
-        result = process_response_(bufferedStream, record, total);
-        ESP_LOGD(TAG, "BufferedStream processed %zu bytes", bufferedStream.getBytesRead());
-        
+        result = process_response_(bufferedStream, record, records_count);
+        ESP_LOGD(TAG, "BufferedStream processed %zu bytes, records_count: %d", bufferedStream.getBytesRead(), records_count);
+
         // Log buffer utilization for optimization insights
         if (bufferedStream.getBufferUtilization() > 0.8f) {
-          ESP_LOGD(TAG, "High buffer utilization: %.1f%% - consider increasing buffer size", 
+          ESP_LOGD(TAG, "High buffer utilization: %.1f%% - consider increasing buffer size",
                    bufferedStream.getBufferUtilization() * 100.0f);
         }
       } else {
         ESP_LOGW(TAG, "BufferedStream not healthy, using direct stream");
-        result = process_response_(stream, record, total);
+        result = process_response_(stream, record, records_count);
       }
       
       // Drain any remaining buffered data to avoid SSL state issues
@@ -257,21 +259,36 @@ bool MoenvAQI::send_request_() {
           ESP_LOGD(TAG, "Data has not changed since last update.");
         }
       } else {
-        if (total == -1) {
-          return false;
+        // Site not found in current page
+        ESP_LOGD(TAG, "Site '%s' not found at offset %u (records_count: %d, limit: %u)",
+                 site_name_.value().c_str(), offset, records_count, limit);
+
+        // Check if we've reached the end of data
+        if (records_count == 0 || records_count < (int)limit) {
+          if (wrapped) {
+            // Already wrapped around and still not found - site doesn't exist
+            ESP_LOGW(TAG, "Site '%s' not found after full scan", site_name_.value().c_str());
+            break;
+          }
+          // Wrap around to the beginning
+          ESP_LOGD(TAG, "Reached end of data, wrapping around to offset 0");
+          offset = 0;
+          wrapped = true;
+        } else {
+          // More data available, continue to next page
+          offset += limit;
         }
 
-        ESP_LOGW(TAG, "No matching record found for site_name: %s, offset: %u, limit: %u, try next page", site_name_.value().c_str(), offset, limit);
-        offset += limit;
+        // Check if we've completed the wrap-around cycle
+        if (wrapped && offset >= start_offset && start_offset > 0) {
+          ESP_LOGW(TAG, "Completed wrap-around scan, site '%s' not found", site_name_.value().c_str());
+          break;
+        }
       }
     } else {
       ESP_LOGE(TAG, "HTTP request failed, code: %d, error: %s", http_code, http.getString().c_str());
+      http.end();
       return false;
-    }
-
-    if (total != -1 && offset >= (size_t)total) {
-      ESP_LOGW(TAG, "Exceeded total records, site not found.");
-      break;
     }
   }
   http.end();
@@ -331,40 +348,15 @@ bool MoenvAQI::send_request_with_retry_() {
 }
 
 // Process HTTP response
-bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
-  // Get total records
-  if (stream.find("\"total\": \"")) {
-    char buffer[16];
-    int len = stream.readBytesUntil('"', buffer, sizeof(buffer) - 1);
-    if (len > 0) {
-      buffer[len] = '\0';
-      total = atoi(buffer);
-      ESP_LOGD(TAG, "Total records: %d", total);
-    } else {
-      ESP_LOGE(TAG, "Could not read total records");
-      total = -1;
-      return false;
-    }
-  } else {
-    ESP_LOGE(TAG, "Could not find 'total' field");
-    total = -1;
+bool MoenvAQI::process_response_(Stream &stream, Record &record, int &records_count) {
+  records_count = 0;
+
+  if (!stream.find("[")) {
+    ESP_LOGE(TAG, "Could not find array start '['");
     return false;
   }
 
   const std::string target_site_name = site_name_.value();
-
-  // Find the "records" array
-  if (!stream.find("\"records\": [")) {
-    ESP_LOGE(TAG, "Could not find 'records' array");
-    return false;
-  }
-
-  // check for empty array
-  int next = stream.peek();
-  if (next == ']') {
-    ESP_LOGE(TAG, "Empty records array, skipping");
-    return false;
-  }
 
   JsonDocument doc;
 
@@ -377,6 +369,8 @@ bool MoenvAQI::process_response_(Stream &stream, Record &record, int &total) {
       ESP_LOGE(TAG, "deserializeJson() failed: %s", error.c_str());
       continue;  // Skip to the next record
     }
+
+    records_count++;  // Count successfully parsed records
 
     // Extract the sitename
     JsonVariant sitename_json = doc["sitename"];
