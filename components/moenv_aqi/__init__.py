@@ -137,5 +137,7 @@ async def to_code(configs):
             retry_delay = await cg.templatable(config[CONF_RETRY_DELAY], [], cg.uint32)
             cg.add(var.set_retry_delay(retry_delay))
 
+    # WiFi auto-enables Network via Arduino library dependency mapping
+    cg.add_library("WiFi", None)
     cg.add_library("NetworkClientSecure", None)
     cg.add_library("HTTPClient", None)
