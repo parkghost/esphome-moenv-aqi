@@ -19,9 +19,6 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 * **language** (Optional, string, templatable): Language for the data. Defaults to `zh`. Other options might include `en`.
 * **limit** (Optional, integer, templatable): Number of records to fetch per API request page. Defaults to `20`.
 * **sensor_expiry** (Optional, Time, templatable): How long fetched data is considered valid relative to its publish time. Defaults to `90min`.
-* **watchdog_timeout** (Optional, Time, templatable): Timeout for the watchdog timer during the HTTP request. Defaults to `30s`.
-* **http_connect_timeout** (Optional, Time, templatable): Timeout for establishing the HTTP connection. Defaults to `10s`.
-* **http_timeout** (Optional, Time, templatable): Timeout for the TCP connection. Defaults to `10s`.
 * **retry_count** (Optional, integer, templatable): Number of retry attempts for failed HTTP requests. Defaults to `1`. Range: 0-5.
 * **retry_delay** (Optional, Time, templatable): Base delay between retry attempts. Uses exponential backoff with jitter. Defaults to `1s`.
 * **update_interval** (Optional, Time): How often to check for new data. Defaults to `never` (manual updates only).
@@ -31,7 +28,7 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 ##### Automation Triggers:
 
 * **on_data_change** (Optional, Action): An automation action to be performed when new data is received. In Lambdas you can get the value from the trigger with `data`.
-*   **on_error** (Optional, Action): An automation action to be performed when a fetch error occurs.
+* **on_error** (Optional, Action): An automation action to be performed when a fetch error occurs.
 
 #### Example
 
@@ -44,6 +41,11 @@ time:
   - platform: sntp
     id: esp_time
     timezone: Asia/Taipei
+
+http_request:
+  timeout: 10s
+  watchdog_timeout: 30s
+  verify_ssl: false
 
 moenv_aqi:
   - api_key: !secret moenv_api_key

@@ -1,11 +1,11 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_TIME_ID
-from esphome.components import time
+from esphome.components import http_request, time
 from esphome import automation
 
-DEPENDENCIES = ["network", "time"]
-AUTO_LOAD = ["json", "watchdog", "sensor", "text_sensor"]
+DEPENDENCIES = ["network", "time", "http_request"]
+AUTO_LOAD = ["json", "sensor", "text_sensor"]
 
 moenv_aqi_ns = cg.esphome_ns.namespace("moenv_aqi")
 MoenvAQI = moenv_aqi_ns.class_("MoenvAQI", cg.PollingComponent)
@@ -19,12 +19,10 @@ CONF_LIMIT = "limit"
 CONF_SENSOR_EXPIRY = "sensor_expiry"
 CONF_ON_DATA_CHANGE = "on_data_change"
 CONF_ON_ERROR = "on_error"
-CONF_WATCHDOG_TIMEOUT = "watchdog_timeout"
-CONF_HTTP_CONNECT_TIMEOUT = "http_connect_timeout"
-CONF_HTTP_TIMEOUT = "http_timeout"
 CONF_RETRY_COUNT = "retry_count"
 CONF_RETRY_DELAY = "retry_delay"
 CONF_MOENV_AQI_ID = "moenv_aqi_id"
+CONF_HTTP_REQUEST_ID = "http_request_id"
 
 CHILD_SCHEMA = cv.Schema(
     {
@@ -38,6 +36,9 @@ CONFIG_SCHEMA = cv.All(
             {
                 cv.GenerateID(): cv.declare_id(MoenvAQI),
                 cv.GenerateID(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
+                cv.GenerateID(CONF_HTTP_REQUEST_ID): cv.use_id(
+                    http_request.HttpRequestComponent
+                ),
                 cv.Optional(CONF_API_KEY, default=""): cv.templatable(cv.string),
                 cv.Optional(CONF_SITE_NAME, default=""): cv.templatable(cv.string),
                 cv.Optional(CONF_LANGUAGE, default="zh"): cv.templatable(cv.string),
@@ -50,24 +51,6 @@ CONFIG_SCHEMA = cv.All(
                 ),
                 cv.Optional(CONF_ON_DATA_CHANGE): automation.validate_automation(),
                 cv.Optional(CONF_ON_ERROR): automation.validate_automation(),
-                cv.Optional(CONF_WATCHDOG_TIMEOUT, default="30s"): cv.templatable(
-                    cv.All(
-                        cv.positive_not_null_time_period,
-                        cv.positive_time_period_milliseconds,
-                    )
-                ),
-                cv.Optional(CONF_HTTP_CONNECT_TIMEOUT, default="10s"): cv.templatable(
-                    cv.All(
-                        cv.positive_not_null_time_period,
-                        cv.positive_time_period_milliseconds,
-                    )
-                ),
-                cv.Optional(CONF_HTTP_TIMEOUT, default="10s"): cv.templatable(
-                    cv.All(
-                        cv.positive_not_null_time_period,
-                        cv.positive_time_period_milliseconds,
-                    )
-                ),
                 cv.Optional(CONF_RETRY_COUNT, default=1): cv.templatable(
                     cv.All(cv.uint32_t, cv.Range(min=0, max=5))
                 ),
@@ -81,8 +64,7 @@ CONFIG_SCHEMA = cv.All(
         ).extend(cv.polling_component_schema("never"))
     ),
     cv.only_on_esp32,
-    cv.only_with_arduino,
-    cv.require_esphome_version(2025, 7, 0)
+    cv.require_esphome_version(2026, 2, 0),
 )
 
 
@@ -94,6 +76,9 @@ async def to_code(configs):
         if CONF_TIME_ID in config:
             rtc = await cg.get_variable(config[CONF_TIME_ID])
             cg.add(var.set_time(rtc))
+        if CONF_HTTP_REQUEST_ID in config:
+            http_req = await cg.get_variable(config[CONF_HTTP_REQUEST_ID])
+            cg.add(var.set_http_request(http_req))
         if CONF_API_KEY in config:
             api_key = await cg.templatable(config[CONF_API_KEY], [], cg.std_string)
             cg.add(var.set_api_key(api_key))
@@ -119,25 +104,9 @@ async def to_code(configs):
                 [],
                 trigger,
             )
-        if CONF_WATCHDOG_TIMEOUT in config:
-            timeout = await cg.templatable(config[CONF_WATCHDOG_TIMEOUT], [], cg.uint32)
-            cg.add(var.set_watchdog_timeout(timeout))
-        if CONF_HTTP_CONNECT_TIMEOUT in config:
-            timeout = await cg.templatable(
-                config[CONF_HTTP_CONNECT_TIMEOUT], [], cg.uint32
-            )
-            cg.add(var.set_http_connect_timeout(timeout))
-        if CONF_HTTP_TIMEOUT in config:
-            timeout = await cg.templatable(config[CONF_HTTP_TIMEOUT], [], cg.uint32)
-            cg.add(var.set_http_timeout(timeout))
         if CONF_RETRY_COUNT in config:
             retry_count = await cg.templatable(config[CONF_RETRY_COUNT], [], cg.uint32)
             cg.add(var.set_retry_count(retry_count))
         if CONF_RETRY_DELAY in config:
             retry_delay = await cg.templatable(config[CONF_RETRY_DELAY], [], cg.uint32)
             cg.add(var.set_retry_delay(retry_delay))
-
-    # WiFi auto-enables Network via Arduino library dependency mapping
-    cg.add_library("WiFi", None)
-    cg.add_library("NetworkClientSecure", None)
-    cg.add_library("HTTPClient", None)

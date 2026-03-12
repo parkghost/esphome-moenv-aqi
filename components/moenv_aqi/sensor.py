@@ -3,14 +3,12 @@ import esphome.config_validation as cv
 from esphome.components import sensor
 from esphome.const import (
     UNIT_EMPTY,
-    ICON_EMPTY,
     UNIT_PARTS_PER_BILLION,
     UNIT_PARTS_PER_MILLION,
     UNIT_MICROGRAMS_PER_CUBIC_METER,
     UNIT_DEGREES,
     ICON_GAS_CYLINDER,
     ICON_MOLECULE_CO,
-    ICON_MOLECULE_CO2,
     ICON_GRAIN,
     ICON_WEATHER_WINDY,
     ICON_SIGN_DIRECTION,

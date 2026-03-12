@@ -1,7 +1,7 @@
 #include "moenv_aqi.h"
 
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_random.h>
 
 #include <algorithm>
 #include <array>
@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "esphome/components/network/util.h"
-#include "esphome/components/watchdog/watchdog.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/time.h"
 
@@ -69,34 +68,11 @@ void MoenvAQI::update() {
     reset_site_data_();
   }
 
-  if (send_request_with_retry_()) {
-    this->status_clear_warning();
+  // Cancel any pending retry before starting fresh
+  this->cancel_timeout("moenv_retry");
+  this->retry_in_progress_ = false;
 
-    this->last_site_name_ = site_name_.value();
-    this->last_limit_ = limit_.value();
-    if (this->last_success_) {
-      auto now = this->rtc_->now();
-      if (now.is_valid()) {
-        this->last_success_->publish_state(now.strftime("%Y-%m-%d %H:%M:%S"));
-      }
-    }
-  } else {
-    this->last_successful_offset_ = 0;
-    this->status_set_warning();
-    this->on_error_trigger_.trigger();
-
-    if (this->last_error_) {
-      auto now = this->rtc_->now();
-      if (now.is_valid()) {
-        this->last_error_->publish_state(now.strftime("%Y-%m-%d %H:%M:%S"));
-      }
-    }
-  }
-
-  ESP_LOGD(TAG, "Saving last_successful_offset_: %u", this->last_successful_offset_);
-  this->pref_.save(&this->last_successful_offset_);
-
-  this->publish_states_();
+  this->try_send_request_(0);
 }
 
 // Debug configuration
@@ -107,9 +83,6 @@ void MoenvAQI::dump_config() {
   ESP_LOGCONFIG(TAG, "  Language: %s", language_.value().c_str());
   ESP_LOGCONFIG(TAG, "  Limit: %u", limit_.value());
   ESP_LOGCONFIG(TAG, "  Sensor Expired: %u minutes", sensor_expiry_.value() / 1000 / 60);
-  ESP_LOGCONFIG(TAG, "  Watchdog Timeout: %u ms", watchdog_timeout_.value());
-  ESP_LOGCONFIG(TAG, "  HTTP Connect Timeout: %u ms", http_connect_timeout_.value());
-  ESP_LOGCONFIG(TAG, "  HTTP Timeout: %u ms", http_timeout_.value());
   ESP_LOGCONFIG(TAG, "  Retry Count: %u", retry_count_.value());
   ESP_LOGCONFIG(TAG, "  Retry Delay: %u ms", retry_delay_.value());
   LOG_UPDATE_INTERVAL(this);
@@ -157,12 +130,10 @@ bool MoenvAQI::send_request_() {
     return false;
   }
 
-  watchdog::WatchdogManager wdm(this->watchdog_timeout_.value());
-
-  const size_t start_offset = last_successful_offset_;  // Remember starting point for wrap-around
+  const size_t start_offset = last_successful_offset_;
   size_t offset = start_offset;
   size_t limit = limit_.value();
-  bool wrapped = false;  // Track if we've wrapped around to beginning
+  bool wrapped = false;
 
   std::string limit_parm;
   limit_parm.reserve(32);
@@ -183,12 +154,6 @@ bool MoenvAQI::send_request_() {
   url_base += api_key_.value();
   url_base += limit_parm;
 
-  HTTPClient http;
-  http.useHTTP10(true);
-  http.setConnectTimeout(http_connect_timeout_.value());
-  http.setTimeout(http_timeout_.value());
-  http.addHeader("Content-Type", "application/json");
-
   size_t total_checked = 0;
   while (!found) {
     if (total_checked >= MAX_RECORDS_CHECKED) {
@@ -202,153 +167,141 @@ bool MoenvAQI::send_request_() {
     url += "&offset=";
     url += std::to_string(offset);
 
-    http.begin(url.c_str());
     ESP_LOGD(TAG, "Sending query: %s", url.c_str());
-    ESP_LOGD(TAG, "Before request: free heap:%u, max block:%u", ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+    ESP_LOGD(TAG, "Before request: free heap:%u, max block:%u",
+             esp_get_free_heap_size(),
+             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
     App.feed_wdt();
-    int http_code = http.GET();
-    ESP_LOGD(TAG, "After request: free heap:%u, max block:%u", ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
-    // Process successful HTTP response
-    if (http_code == HTTP_CODE_OK) {
-      App.feed_wdt();
-      ESP_LOGD(TAG, "Looking for site: %s", site_name_.value().c_str());
-      
-      // Try buffered stream parsing first (more robust)
-      bool result = false;
-      Stream& stream = http.getStream();
+    auto container = this->http_request_->get(url);
 
-      BufferedStream bufferedStream(stream, 1024); // 1KB buffer
-      ESP_LOGD(TAG, "Using BufferedStream (1KB buffer)");
-      
-      if (bufferedStream.isHealthy()) {
-        result = process_response_(bufferedStream, record, records_count);
-        ESP_LOGD(TAG, "BufferedStream processed %zu bytes, records_count: %d", bufferedStream.getBytesRead(), records_count);
+    ESP_LOGD(TAG, "After request: free heap:%u, max block:%u",
+             esp_get_free_heap_size(),
+             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
-        // Log buffer utilization for optimization insights
-        if (bufferedStream.getBufferUtilization() > 0.8f) {
-          ESP_LOGD(TAG, "High buffer utilization: %.1f%% - consider increasing buffer size",
-                   bufferedStream.getBufferUtilization() * 100.0f);
-        }
-      } else {
-        ESP_LOGW(TAG, "BufferedStream not healthy, using direct stream");
-        result = process_response_(stream, record, records_count);
-      }
-      
-      // Drain any remaining buffered data to avoid SSL state issues
-      if (bufferedStream.isHealthy()) {
-        bufferedStream.drainBuffer();
-      }
-
-      http.end();
-      ESP_LOGD(TAG, "After json parse: free heap:%u, max block:%u", ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-
-      if (result) {
-        found = true;
-        this->last_successful_offset_ = offset;
-        if (check_changes_(record)) {
-          this->data_ = record;
-          if (validate_record_()) {
-            ESP_LOGD(TAG, "Triggering on_data_change automation.");
-            this->on_data_change_trigger_.trigger(this->data_);
-          } else {
-            ESP_LOGW(TAG, "Record validation failed.");
-            return false;
-          }
-        } else {
-          ESP_LOGD(TAG, "Data has not changed since last update.");
-        }
-      } else {
-        // Site not found in current page
-        ESP_LOGD(TAG, "Site '%s' not found at offset %u (records_count: %d, limit: %u)",
-                 site_name_.value().c_str(), offset, records_count, limit);
-
-        // Check if we've reached the end of data
-        if (records_count == 0 || records_count < (int)limit) {
-          if (wrapped) {
-            // Already wrapped around and still not found - site doesn't exist
-            ESP_LOGW(TAG, "Site '%s' not found after full scan", site_name_.value().c_str());
-            break;
-          }
-          // Wrap around to the beginning
-          ESP_LOGD(TAG, "Reached end of data, wrapping around to offset 0");
-          offset = 0;
-          wrapped = true;
-        } else {
-          // More data available, continue to next page
-          offset += limit;
-        }
-
-        // Check if we've completed the wrap-around cycle
-        if (wrapped && offset >= start_offset && start_offset > 0) {
-          ESP_LOGW(TAG, "Completed wrap-around scan, site '%s' not found", site_name_.value().c_str());
-          break;
-        }
-      }
-    } else {
-      ESP_LOGE(TAG, "HTTP request failed, code: %d, error: %s", http_code, http.getString().c_str());
-      http.end();
+    if (container == nullptr) {
+      ESP_LOGE(TAG, "HTTP request failed: no response container");
       return false;
     }
+
+    if (container->status_code != 200) {
+      ESP_LOGE(TAG, "HTTP request failed with code: %d", container->status_code);
+      container->end();
+      return false;
+    }
+
+    App.feed_wdt();
+    ESP_LOGD(TAG, "Looking for site: %s", site_name_.value().c_str());
+
+    HttpStreamAdapter stream(container, 1024, this->http_request_->get_timeout());
+    bool result = process_response_(stream, record, records_count);
+    ESP_LOGD(TAG, "Processed %zu bytes, records_count: %d", stream.getBytesRead(), records_count);
+
+    container->end();
+
+    ESP_LOGD(TAG, "After json parse: free heap:%u, max block:%u",
+             esp_get_free_heap_size(),
+             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+
+    if (result) {
+      found = true;
+      this->last_successful_offset_ = offset;
+      if (check_changes_(record)) {
+        this->data_ = record;
+        if (validate_record_()) {
+          ESP_LOGD(TAG, "Triggering on_data_change automation.");
+          this->on_data_change_trigger_.trigger(this->data_);
+        } else {
+          ESP_LOGW(TAG, "Record validation failed.");
+          return false;
+        }
+      } else {
+        ESP_LOGD(TAG, "Data has not changed since last update.");
+      }
+    } else {
+      ESP_LOGD(TAG, "Site '%s' not found at offset %u (records_count: %d, limit: %u)",
+               site_name_.value().c_str(), offset, records_count, limit);
+
+      if (records_count == 0 || records_count < (int)limit) {
+        if (wrapped) {
+          ESP_LOGW(TAG, "Site '%s' not found after full scan", site_name_.value().c_str());
+          break;
+        }
+        ESP_LOGD(TAG, "Reached end of data, wrapping around to offset 0");
+        offset = 0;
+        wrapped = true;
+      } else {
+        offset += limit;
+      }
+
+      if (wrapped && offset >= start_offset && start_offset > 0) {
+        ESP_LOGW(TAG, "Completed wrap-around scan, site '%s' not found", site_name_.value().c_str());
+        break;
+      }
+    }
   }
-  http.end();
   return found;
 }
 
-// Send HTTP request with retry mechanism
-bool MoenvAQI::send_request_with_retry_() {
+// Non-blocking retry with exponential backoff
+void MoenvAQI::try_send_request_(uint32_t attempt) {
+  if (this->send_request_()) {
+    this->retry_in_progress_ = false;
+    this->status_clear_warning();
+
+    this->last_site_name_ = site_name_.value();
+    this->last_limit_ = limit_.value();
+    if (this->last_success_) {
+      auto now = this->rtc_->now();
+      if (now.is_valid()) {
+        this->last_success_->publish_state(now.strftime("%Y-%m-%d %H:%M:%S"));
+      }
+    }
+
+    ESP_LOGD(TAG, "Saving last_successful_offset_: %u", this->last_successful_offset_);
+    this->pref_.save(&this->last_successful_offset_);
+    this->publish_states_();
+    return;
+  }
+
   uint32_t retry_count = retry_count_.value();
-  uint32_t retry_delay = retry_delay_.value();
-  
-  // If retry count is 0, just make one attempt
-  if (retry_count == 0) {
-    return send_request_();
+  if (attempt < retry_count) {
+    uint32_t retry_delay = retry_delay_.value();
+    uint32_t backoff_delay = retry_delay * (1 << attempt);
+    uint32_t jitter = esp_random() % 1000;
+    uint32_t total_delay = std::min(backoff_delay + jitter, static_cast<uint32_t>(30000));
+
+    ESP_LOGW(TAG, "Request failed (attempt %u/%u), retrying in %u ms",
+             attempt + 1, retry_count + 1, total_delay);
+
+    this->retry_in_progress_ = true;
+    this->set_timeout("moenv_retry", total_delay, [this, next = attempt + 1]() {
+      this->try_send_request_(next);
+    });
+    return;
   }
-  
-  for (uint32_t attempt = 0; attempt <= retry_count; ++attempt) {
-    if (attempt > 0) {
-      ESP_LOGW(TAG, "Retrying request (attempt %u/%u)", attempt + 1, retry_count + 1);
-      
-      // Calculate exponential backoff with jitter
-      uint32_t backoff_delay = retry_delay * (1 << (attempt - 1)); // Exponential backoff
-      uint32_t jitter = random() % 1000; // Add up to 1 second of jitter
-      uint32_t total_delay = backoff_delay + jitter;
-      
-      // Cap the delay to prevent excessive waiting
-      if (total_delay > 30000) { // Max 30 seconds
-        total_delay = 30000;
-      }
-      
-      ESP_LOGD(TAG, "Backoff delay: %u ms (base: %u ms, jitter: %u ms)", total_delay, backoff_delay, jitter);
-      
-      // Use non-blocking delay to avoid blocking the main loop
-      uint32_t delay_end = millis() + total_delay;
-      while (millis() < delay_end) {
-        App.feed_wdt();
-        delay(100); // Small delay to prevent busy waiting
-      }
-    }
-    
-    ESP_LOGD(TAG, "HTTP request attempt %u/%u", attempt + 1, retry_count + 1);
-    
-    if (send_request_()) {
-      if (attempt > 0) {
-        ESP_LOGI(TAG, "Request succeeded on attempt %u/%u", attempt + 1, retry_count + 1);
-      }
-      return true;
-    }
-    
-    if (attempt < retry_count) {
-      ESP_LOGW(TAG, "Request failed on attempt %u/%u, will retry", attempt + 1, retry_count + 1);
+
+  // Final failure
+  this->retry_in_progress_ = false;
+  this->last_successful_offset_ = 0;
+  this->status_set_warning();
+  this->on_error_trigger_.trigger();
+
+  if (this->last_error_) {
+    auto now = this->rtc_->now();
+    if (now.is_valid()) {
+      this->last_error_->publish_state(now.strftime("%Y-%m-%d %H:%M:%S"));
     }
   }
-  
-  ESP_LOGE(TAG, "Request failed after %u attempts", retry_count + 1);
-  return false;
+
+  ESP_LOGE(TAG, "Request failed after %u attempts", retry_count_.value() + 1);
+  ESP_LOGD(TAG, "Saving last_successful_offset_: %u", this->last_successful_offset_);
+  this->pref_.save(&this->last_successful_offset_);
+  this->publish_states_();
 }
 
 // Process HTTP response
-bool MoenvAQI::process_response_(Stream &stream, Record &record, int &records_count) {
+bool MoenvAQI::process_response_(HttpStreamAdapter &stream, Record &record, int &records_count) {
   records_count = 0;
 
   if (!stream.find("[")) {

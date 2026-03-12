@@ -15,7 +15,7 @@ esphome:
 esp32:
   board: esp32-c3-devkitm-1
   framework:
-    type: arduino
+    type: esp-idf
 
 wifi:
   ssid: !secret wifi_ssid
@@ -23,6 +23,11 @@ wifi:
   on_connect:
     - delay: 2s
     - component.update: moenv_aqi_id
+
+http_request:
+  timeout: 10s
+  watchdog_timeout: 30s
+  verify_ssl: false
 
 api:
 
