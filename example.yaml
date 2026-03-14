@@ -20,9 +20,6 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  on_connect:
-    - delay: 2s
-    - component.update: moenv_aqi_id
 
 http_request:
   timeout: 10s
@@ -63,35 +60,30 @@ moenv_aqi:
     on_data_change:
       - lambda: |-
           auto time = id(esp_time).now();
-          // Check publish time is within 90 minutes
-          if (data.validate(time, 90)) {
-            ESP_LOGI("moenv_aqi", "Site Name: %s", data.site_name.c_str());
-            ESP_LOGI("moenv_aqi", "County: %s", data.county.c_str());
-            ESP_LOGI("moenv_aqi", "AQI: %d", data.aqi);
-            ESP_LOGI("moenv_aqi", "Pollutant: %s", data.pollutant.c_str());
-            ESP_LOGI("moenv_aqi", "Status: %s", data.status.c_str());
-            ESP_LOGI("moenv_aqi", "SO2: %.2f", data.so2);
-            ESP_LOGI("moenv_aqi", "CO: %.2f", data.co);
-            ESP_LOGI("moenv_aqi", "O3: %d", data.o3);
-            ESP_LOGI("moenv_aqi", "O3 8hr: %d", data.o3_8hr);
-            ESP_LOGI("moenv_aqi", "PM10: %d", data.pm10);
-            ESP_LOGI("moenv_aqi", "PM2.5: %d", data.pm2_5);
-            ESP_LOGI("moenv_aqi", "NO2: %d", data.no2);
-            ESP_LOGI("moenv_aqi", "NOx: %d", data.nox);
-            ESP_LOGI("moenv_aqi", "NO: %.2f", data.no);
-            ESP_LOGI("moenv_aqi", "Wind Speed: %.2f", data.wind_speed);
-            ESP_LOGI("moenv_aqi", "Wind Direction: %d", data.wind_direc);
-            ESP_LOGI("moenv_aqi", "Publish Time: %s", data.publish_time.c_str());
-            ESP_LOGI("moenv_aqi", "CO 8hr: %.2f", data.co_8hr);
-            ESP_LOGI("moenv_aqi", "PM2.5 Avg: %.2f", data.pm2_5_avg);
-            ESP_LOGI("moenv_aqi", "PM10 Avg: %d", data.pm10_avg);
-            ESP_LOGI("moenv_aqi", "SO2 Avg: %.2f", data.so2_avg);
-            ESP_LOGI("moenv_aqi", "Longitude: %.6f", data.longitude);
-            ESP_LOGI("moenv_aqi", "Latitude: %.6f", data.latitude);
-            ESP_LOGI("moenv_aqi", "Site ID: %d", data.site_id);
-          } else {
-            ESP_LOGI("moenv_aqi", "Data is not valid");
-          }
+          ESP_LOGI("moenv_aqi", "Site Name: %s", data.site_name.c_str());
+          ESP_LOGI("moenv_aqi", "County: %s", data.county.c_str());
+          ESP_LOGI("moenv_aqi", "AQI: %d", data.aqi);
+          ESP_LOGI("moenv_aqi", "Pollutant: %s", data.pollutant.c_str());
+          ESP_LOGI("moenv_aqi", "Status: %s", data.status.c_str());
+          ESP_LOGI("moenv_aqi", "SO2: %.2f", data.so2);
+          ESP_LOGI("moenv_aqi", "CO: %.2f", data.co);
+          ESP_LOGI("moenv_aqi", "O3: %d", data.o3);
+          ESP_LOGI("moenv_aqi", "O3 8hr: %d", data.o3_8hr);
+          ESP_LOGI("moenv_aqi", "PM10: %d", data.pm10);
+          ESP_LOGI("moenv_aqi", "PM2.5: %d", data.pm2_5);
+          ESP_LOGI("moenv_aqi", "NO2: %d", data.no2);
+          ESP_LOGI("moenv_aqi", "NOx: %d", data.nox);
+          ESP_LOGI("moenv_aqi", "NO: %.2f", data.no);
+          ESP_LOGI("moenv_aqi", "Wind Speed: %.2f", data.wind_speed);
+          ESP_LOGI("moenv_aqi", "Wind Direction: %d", data.wind_direc);
+          ESP_LOGI("moenv_aqi", "Publish Time: %s", data.publish_time.c_str());
+          ESP_LOGI("moenv_aqi", "CO 8hr: %.2f", data.co_8hr);
+          ESP_LOGI("moenv_aqi", "PM2.5 Avg: %.2f", data.pm2_5_avg);
+          ESP_LOGI("moenv_aqi", "PM10 Avg: %d", data.pm10_avg);
+          ESP_LOGI("moenv_aqi", "SO2 Avg: %.2f", data.so2_avg);
+          ESP_LOGI("moenv_aqi", "Longitude: %.6f", data.longitude);
+          ESP_LOGI("moenv_aqi", "Latitude: %.6f", data.latitude);
+          ESP_LOGI("moenv_aqi", "Site ID: %d", data.site_id);
 
 sensor:
   - platform: moenv_aqi

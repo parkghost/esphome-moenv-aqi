@@ -1,15 +1,7 @@
 #pragma once
 
-#include <algorithm>
-#include <concepts>
-#include <functional>
-#include <set>
-#include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
-#include <utility>
-#include <vector>
 
 #include "esphome/components/http_request/http_request.h"
 #include "esphome/components/sensor/sensor.h"
@@ -61,34 +53,34 @@ struct Record;
 struct FieldMapping {
   std::string_view key;
   bool required;
-  std::function<void(Record &, JsonVariant &)> setter;
+  void (*setter)(Record &, JsonVariant &);
 };
 
 struct Record {
   std::string site_name;
   std::string county;
-  int aqi;
+  int aqi{0};
   std::string pollutant;
   std::string status;
-  float so2;
-  float co;
-  int o3;
-  int o3_8hr;
-  int pm10;
-  int pm2_5;
-  int no2;
-  int nox;
-  float no;
-  float wind_speed;
-  int wind_direc;
+  float so2{0.0f};
+  float co{0.0f};
+  int o3{0};
+  int o3_8hr{0};
+  int pm10{0};
+  int pm2_5{0};
+  int no2{0};
+  int nox{0};
+  float no{0.0f};
+  float wind_speed{0.0f};
+  int wind_direc{0};
   std::string publish_time;
-  float co_8hr;
-  float pm2_5_avg;
-  int pm10_avg;
-  float so2_avg;
-  double longitude;
-  double latitude;
-  int site_id;
+  float co_8hr{0.0f};
+  float pm2_5_avg{0.0f};
+  int pm10_avg{0};
+  float so2_avg{0.0f};
+  double longitude{0.0};
+  double latitude{0.0};
+  int site_id{0};
 
   bool validate(esphome::ESPTime time, size_t minutes) const {
     if (!time.is_valid()) {
@@ -248,7 +240,7 @@ class MoenvAQI : public PollingComponent {
   ESPPreferenceObject pref_;
   size_t last_successful_offset_ = 0;
   std::string last_site_name_;
-  uint32_t last_limit_;
+  uint32_t last_limit_{0};
   Record data_;
   bool retry_in_progress_{false};
 

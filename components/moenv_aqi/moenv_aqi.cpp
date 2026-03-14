@@ -5,12 +5,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <ctime>
-#include <functional>
 #include <memory>
-#include <set>
-#include <vector>
 
 #include "esphome/components/network/util.h"
 #include "esphome/core/helpers.h"
@@ -111,10 +107,6 @@ bool MoenvAQI::validate_config_() {
     valid = false;
   }
 
-  if (sensor_expiry_.value() < 0) {
-    ESP_LOGE(TAG, "Sensor Expiry must be greater or equal to 0");
-    valid = false;
-  }
   return valid;
 }
 
@@ -143,7 +135,7 @@ bool MoenvAQI::send_request_() {
   }
 
   bool found = false;
-  Record record;
+  Record record{};
   int records_count = 0;
 
   std::string url_base;
@@ -370,8 +362,7 @@ bool MoenvAQI::process_response_(HttpStreamAdapter &stream, Record &record, int 
           FieldMapping{FIELD_SITEID, false, [](Record &r, JsonVariant &v) { r.site_id = v.as<int>(); }},
       };
 
-      std::span<const FieldMapping> mapping_span{mappings};
-      for (const auto &m : mapping_span) {
+      for (const auto &m : mappings) {
         JsonVariant val = doc[m.key];
         if (val.isNull()) {
           if (m.required) {
@@ -412,50 +403,39 @@ void MoenvAQI::publish_states_() {
     }
   }
 
-  if (validate_record_()) {
-    if (this->aqi_) this->aqi_->publish_state(this->data_.aqi);
-    if (this->so2_) this->so2_->publish_state(this->data_.so2);
-    if (this->co_) this->co_->publish_state(this->data_.co);
-    if (this->no_) this->no_->publish_state(this->data_.no);
-    if (this->wind_speed_) this->wind_speed_->publish_state(this->data_.wind_speed);
-    if (this->co_8hr_) this->co_8hr_->publish_state(this->data_.co_8hr);
-    if (this->pm2_5_avg_) this->pm2_5_avg_->publish_state(this->data_.pm2_5_avg);
-    if (this->so2_avg_) this->so2_avg_->publish_state(this->data_.so2_avg);
-    if (this->o3_) this->o3_->publish_state(this->data_.o3);
-    if (this->o3_8hr_) this->o3_8hr_->publish_state(this->data_.o3_8hr);
-    if (this->pm10_) this->pm10_->publish_state(this->data_.pm10);
-    if (this->pm2_5_) this->pm2_5_->publish_state(this->data_.pm2_5);
-    if (this->no2_) this->no2_->publish_state(this->data_.no2);
-    if (this->nox_) this->nox_->publish_state(this->data_.nox);
-    if (this->wind_direc_) this->wind_direc_->publish_state(this->data_.wind_direc);
-    if (this->pm10_avg_) this->pm10_avg_->publish_state(this->data_.pm10_avg);
-    if (this->pollutant_) this->pollutant_->publish_state(this->data_.pollutant);
-    if (this->status_) this->status_->publish_state(this->data_.status);
+  const bool valid = validate_record_();
+
+  auto publish = [valid](sensor::Sensor *s, float value) {
+    if (s) s->publish_state(valid ? value : NAN);
+  };
+
+  publish(this->aqi_, this->data_.aqi);
+  publish(this->so2_, this->data_.so2);
+  publish(this->co_, this->data_.co);
+  publish(this->no_, this->data_.no);
+  publish(this->wind_speed_, this->data_.wind_speed);
+  publish(this->co_8hr_, this->data_.co_8hr);
+  publish(this->pm2_5_avg_, this->data_.pm2_5_avg);
+  publish(this->so2_avg_, this->data_.so2_avg);
+  publish(this->o3_, this->data_.o3);
+  publish(this->o3_8hr_, this->data_.o3_8hr);
+  publish(this->pm10_, this->data_.pm10);
+  publish(this->pm2_5_, this->data_.pm2_5);
+  publish(this->no2_, this->data_.no2);
+  publish(this->nox_, this->data_.nox);
+  publish(this->wind_direc_, this->data_.wind_direc);
+  publish(this->pm10_avg_, this->data_.pm10_avg);
+
+  if (this->pollutant_) this->pollutant_->publish_state(valid ? this->data_.pollutant : "");
+  if (this->status_) this->status_->publish_state(valid ? this->data_.status : "");
+
+  if (valid) {
     if (this->publish_time_) this->publish_time_->publish_state(this->data_.publish_time);
     if (this->site_id_) this->site_id_->publish_state(this->data_.site_id);
     if (this->longitude_) this->longitude_->publish_state(this->data_.longitude);
     if (this->latitude_) this->latitude_->publish_state(this->data_.latitude);
     if (this->current_site_name_) this->current_site_name_->publish_state(this->data_.site_name);
     if (this->county_) this->county_->publish_state(this->data_.county);
-  } else {
-    if (this->aqi_) this->aqi_->publish_state(NAN);
-    if (this->so2_) this->so2_->publish_state(NAN);
-    if (this->co_) this->co_->publish_state(NAN);
-    if (this->no_) this->no_->publish_state(NAN);
-    if (this->wind_speed_) this->wind_speed_->publish_state(NAN);
-    if (this->co_8hr_) this->co_8hr_->publish_state(NAN);
-    if (this->pm2_5_avg_) this->pm2_5_avg_->publish_state(NAN);
-    if (this->so2_avg_) this->so2_avg_->publish_state(NAN);
-    if (this->o3_) this->o3_->publish_state(NAN);
-    if (this->o3_8hr_) this->o3_8hr_->publish_state(NAN);
-    if (this->pm10_) this->pm10_->publish_state(NAN);
-    if (this->pm2_5_) this->pm2_5_->publish_state(NAN);
-    if (this->no2_) this->no2_->publish_state(NAN);
-    if (this->nox_) this->nox_->publish_state(NAN);
-    if (this->wind_direc_) this->wind_direc_->publish_state(NAN);
-    if (this->pm10_avg_) this->pm10_avg_->publish_state(NAN);
-    if (this->pollutant_) this->pollutant_->publish_state("");
-    if (this->status_) this->status_->publish_state("");
   }
 }
 

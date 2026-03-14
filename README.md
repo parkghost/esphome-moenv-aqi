@@ -4,8 +4,8 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 
 ## Prerequisites
 
-- You need a MOENV Open Data API authorization key. You can obtain one from the [MOENV Open Data Platform](https://data.moenv.gov.tw/paradigm).
-- You need to know the exact `site_name` for the monitoring station you want to use (e.g., "永和"). Refer to the [MOENV API Dataset](https://data.moenv.gov.tw/dataset/detail/AQX_P_432).
+- A MOENV Open Data API authorization key. You can obtain one from the [MOENV Open Data Platform](https://data.moenv.gov.tw/paradigm).
+- The exact `site_name` for the monitoring station you want to use (e.g., "永和"). Refer to the [MOENV API Dataset](https://data.moenv.gov.tw/dataset/detail/AQX_P_432).
 
 ## Components
 
@@ -36,6 +36,11 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 external_components:
   - source: github://parkghost/esphome-moenv-aqi
     components: [moenv_aqi]
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
 
 time:
   - platform: sntp
@@ -120,7 +125,7 @@ text_sensor:
 ```cpp
 auto data = id(moenv_aqi_id).get_data();
 auto time = id(esp_time).now();
-// Check publish time is within 90 minutes
+// validate() checks publish_time is within the given minutes and not in the future
 if (data.validate(time, 90)) {
   ESP_LOGI("moenv_aqi", "Site Name: %s", data.site_name.c_str());
   ESP_LOGI("moenv_aqi", "County: %s", data.county.c_str());
