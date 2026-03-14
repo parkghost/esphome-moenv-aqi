@@ -2,8 +2,10 @@
 
 This is an external component for ESPHome that fetches Air Quality Index (AQI) data for a specific monitoring site from Taiwan's Ministry of Environment (MOENV) Open Data platform.
 
-## Prerequisites
+## Requirements
 
+- **ESP32** platform only.
+- **ESPHome >= 2026.2.0**.
 - A MOENV Open Data API authorization key. You can obtain one from the [MOENV Open Data Platform](https://data.moenv.gov.tw/paradigm).
 - The exact `site_name` for the monitoring station you want to use (e.g., "永和"). Refer to the [MOENV API Dataset](https://data.moenv.gov.tw/dataset/detail/AQX_P_432).
 
@@ -16,6 +18,8 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 * **id** (Optional, ID): The id to use for this component.
 * **api_key** (Required, string, templatable): Your MOENV Open Data API key.
 * **site_name** (Required, string, templatable): The name of the monitoring site (e.g., "永和", "板橋").
+* **time_id** (Optional, ID): The id of the `time` component to use. Specify this when you have multiple `time` components.
+* **http_request_id** (Optional, ID): The id of the `http_request` component to use. Specify this when you have multiple `http_request` components.
 * **language** (Optional, string, templatable): Language for the data. Defaults to `zh`. Other options might include `en`.
 * **limit** (Optional, integer, templatable): Number of records to fetch per API request page. Defaults to `20`.
 * **sensor_expiry** (Optional, Time, templatable): How long fetched data is considered valid relative to its publish time. Defaults to `90min`.
