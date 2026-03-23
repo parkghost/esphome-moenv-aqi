@@ -99,11 +99,20 @@ struct Record {
       return false;
     }
 
-    time_t publish_time_ts = mktime(&tm);
-    if (publish_time_ts == -1) {
-      ESP_LOGW(TAG, "mktime failed for publish_time: %s", publish_time.c_str());
-      return false;
-    }
+    ESPTime publish_esp_time{};
+    publish_esp_time.second = tm.tm_sec;
+    publish_esp_time.minute = tm.tm_min;
+    publish_esp_time.hour = tm.tm_hour;
+    publish_esp_time.day_of_month = tm.tm_mday;
+    publish_esp_time.day_of_week = 1;
+    publish_esp_time.month = tm.tm_mon + 1;
+    publish_esp_time.year = tm.tm_year + 1900;
+    uint16_t doy = publish_esp_time.day_of_month;
+    for (uint8_t i = 1; i < publish_esp_time.month; i++)
+      doy += days_in_month(i, publish_esp_time.year);
+    publish_esp_time.day_of_year = doy;
+    publish_esp_time.recalc_timestamp_local();
+    time_t publish_time_ts = publish_esp_time.timestamp;
 
     double diff_seconds = difftime(time.timestamp, publish_time_ts);
     if (diff_seconds > (double)(minutes * 60)) {

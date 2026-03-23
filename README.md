@@ -4,8 +4,6 @@ This is an external component for ESPHome that fetches Air Quality Index (AQI) d
 
 ## Requirements
 
-- **ESP32** platform only.
-- **ESPHome >= 2026.2.0**.
 - A MOENV Open Data API authorization key. You can obtain one from the [MOENV Open Data Platform](https://data.moenv.gov.tw/paradigm).
 - The exact `site_name` for the monitoring station you want to use (e.g., "永和"). Refer to the [MOENV API Dataset](https://data.moenv.gov.tw/dataset/detail/AQX_P_432).
 
