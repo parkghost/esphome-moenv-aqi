@@ -42,12 +42,18 @@ void MoenvAQI::reset_site_data_() {
   ESP_LOGD(TAG, "Site name changed, resetting data and offsets");
   last_successful_offset_ = 0;
   data_ = Record();
-  if (this->publish_time_) this->publish_time_->publish_state("");
-  if (this->site_id_) this->site_id_->publish_state(this->data_.site_id);
-  if (this->longitude_) this->longitude_->publish_state(this->data_.longitude);
-  if (this->latitude_) this->latitude_->publish_state(this->data_.latitude);
-  if (this->current_site_name_) this->current_site_name_->publish_state(this->data_.site_name);
-  if (this->county_) this->county_->publish_state(this->data_.county);
+  if (this->publish_time_)
+    this->publish_time_->publish_state("");
+  if (this->site_id_)
+    this->site_id_->publish_state(this->data_.site_id);
+  if (this->longitude_)
+    this->longitude_->publish_state(this->data_.longitude);
+  if (this->latitude_)
+    this->latitude_->publish_state(this->data_.latitude);
+  if (this->current_site_name_)
+    this->current_site_name_->publish_state(this->data_.site_name);
+  if (this->county_)
+    this->county_->publish_state(this->data_.county);
 }
 
 // Periodic update
@@ -162,15 +168,13 @@ bool MoenvAQI::send_request_() {
     url += std::to_string(offset);
 
     ESP_LOGD(TAG, "Sending query: %s", url.c_str());
-    ESP_LOGD(TAG, "Before request: free heap:%" PRIu32 ", max block:%zu",
-             esp_get_free_heap_size(),
+    ESP_LOGD(TAG, "Before request: free heap:%" PRIu32 ", max block:%zu", esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
     App.feed_wdt();
 
     auto container = this->http_request_->get(url);
 
-    ESP_LOGD(TAG, "After request: free heap:%" PRIu32 ", max block:%zu",
-             esp_get_free_heap_size(),
+    ESP_LOGD(TAG, "After request: free heap:%" PRIu32 ", max block:%zu", esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
     if (container == nullptr) {
@@ -193,8 +197,7 @@ bool MoenvAQI::send_request_() {
 
     container->end();
 
-    ESP_LOGD(TAG, "After json parse: free heap:%" PRIu32 ", max block:%zu",
-             esp_get_free_heap_size(),
+    ESP_LOGD(TAG, "After json parse: free heap:%" PRIu32 ", max block:%zu", esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
     if (result) {
@@ -213,10 +216,10 @@ bool MoenvAQI::send_request_() {
         ESP_LOGD(TAG, "Data has not changed since last update.");
       }
     } else {
-      ESP_LOGD(TAG, "Site '%s' not found at offset %u (records_count: %d, limit: %u)",
-               site_name_.value().c_str(), offset, records_count, limit);
+      ESP_LOGD(TAG, "Site '%s' not found at offset %u (records_count: %d, limit: %u)", site_name_.value().c_str(),
+               offset, records_count, limit);
 
-      if (records_count == 0 || records_count < (int)limit) {
+      if (records_count == 0 || records_count < (int) limit) {
         if (wrapped) {
           ESP_LOGW(TAG, "Site '%s' not found after full scan", site_name_.value().c_str());
           break;
@@ -265,13 +268,11 @@ void MoenvAQI::try_send_request_(uint32_t attempt) {
     uint32_t jitter = esp_random() % 1000;
     uint32_t total_delay = std::min(backoff_delay + jitter, static_cast<uint32_t>(30000));
 
-    ESP_LOGW(TAG, "Request failed (attempt %" PRIu32 "/%" PRIu32 "), retrying in %" PRIu32 " ms",
-             attempt + 1, retry_count + 1, total_delay);
+    ESP_LOGW(TAG, "Request failed (attempt %" PRIu32 "/%" PRIu32 "), retrying in %" PRIu32 " ms", attempt + 1,
+             retry_count + 1, total_delay);
 
     this->retry_in_progress_ = true;
-    this->set_timeout("moenv_retry", total_delay, [this, next = attempt + 1]() {
-      this->try_send_request_(next);
-    });
+    this->set_timeout("moenv_retry", total_delay, [this, next = attempt + 1]() { this->try_send_request_(next); });
     return;
   }
 
@@ -354,7 +355,8 @@ bool MoenvAQI::process_response_(HttpStreamAdapter &stream, Record &record, int 
           FieldMapping{FIELD_NO, false, [](Record &r, JsonVariant &v) { r.no = v.as<float>(); }},
           FieldMapping{FIELD_WIND_SPEED, false, [](Record &r, JsonVariant &v) { r.wind_speed = v.as<float>(); }},
           FieldMapping{FIELD_WIND_DIREC, false, [](Record &r, JsonVariant &v) { r.wind_direc = v.as<int>(); }},
-          FieldMapping{FIELD_PUBLISH_TIME, true, [](Record &r, JsonVariant &v) { r.publish_time = v.as<std::string>(); }},
+          FieldMapping{FIELD_PUBLISH_TIME, true,
+                       [](Record &r, JsonVariant &v) { r.publish_time = v.as<std::string>(); }},
           FieldMapping{FIELD_CO_8HR, false, [](Record &r, JsonVariant &v) { r.co_8hr = v.as<float>(); }},
           FieldMapping{FIELD_PM25_AVG, false, [](Record &r, JsonVariant &v) { r.pm2_5_avg = v.as<float>(); }},
           FieldMapping{FIELD_PM10_AVG, false, [](Record &r, JsonVariant &v) { r.pm10_avg = v.as<int>(); }},
@@ -394,7 +396,9 @@ bool MoenvAQI::process_response_(HttpStreamAdapter &stream, Record &record, int 
 bool MoenvAQI::check_changes_(const Record &new_data) { return !(this->data_ == new_data); }
 
 // Validate the record based on the current time and valid duration
-bool MoenvAQI::validate_record_() { return this->data_.validate(this->rtc_->now(), this->sensor_expiry_.value() / 1000 / 60); }
+bool MoenvAQI::validate_record_() {
+  return this->data_.validate(this->rtc_->now(), this->sensor_expiry_.value() / 1000 / 60);
+}
 
 // Publish all sensor and text sensor states
 void MoenvAQI::publish_states_() {
@@ -408,7 +412,8 @@ void MoenvAQI::publish_states_() {
   const bool valid = validate_record_();
 
   auto publish = [valid](sensor::Sensor *s, float value) {
-    if (s) s->publish_state(valid ? value : NAN);
+    if (s)
+      s->publish_state(valid ? value : NAN);
   };
 
   publish(this->aqi_, this->data_.aqi);
@@ -428,16 +433,24 @@ void MoenvAQI::publish_states_() {
   publish(this->wind_direc_, this->data_.wind_direc);
   publish(this->pm10_avg_, this->data_.pm10_avg);
 
-  if (this->pollutant_) this->pollutant_->publish_state(valid ? this->data_.pollutant : "");
-  if (this->status_) this->status_->publish_state(valid ? this->data_.status : "");
+  if (this->pollutant_)
+    this->pollutant_->publish_state(valid ? this->data_.pollutant : "");
+  if (this->status_)
+    this->status_->publish_state(valid ? this->data_.status : "");
 
   if (valid) {
-    if (this->publish_time_) this->publish_time_->publish_state(this->data_.publish_time);
-    if (this->site_id_) this->site_id_->publish_state(this->data_.site_id);
-    if (this->longitude_) this->longitude_->publish_state(this->data_.longitude);
-    if (this->latitude_) this->latitude_->publish_state(this->data_.latitude);
-    if (this->current_site_name_) this->current_site_name_->publish_state(this->data_.site_name);
-    if (this->county_) this->county_->publish_state(this->data_.county);
+    if (this->publish_time_)
+      this->publish_time_->publish_state(this->data_.publish_time);
+    if (this->site_id_)
+      this->site_id_->publish_state(this->data_.site_id);
+    if (this->longitude_)
+      this->longitude_->publish_state(this->data_.longitude);
+    if (this->latitude_)
+      this->latitude_->publish_state(this->data_.latitude);
+    if (this->current_site_name_)
+      this->current_site_name_->publish_state(this->data_.site_name);
+    if (this->county_)
+      this->county_->publish_state(this->data_.county);
   }
 }
 

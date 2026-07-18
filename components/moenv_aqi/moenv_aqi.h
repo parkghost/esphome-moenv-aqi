@@ -46,7 +46,6 @@ static constexpr std::string_view FIELD_SITEID = "siteid";
 
 static const int MAX_FUTURE_PUBLISH_TIME_MINUTES = 10;
 
-
 // Forward declaration for FieldMapping
 struct Record;
 
@@ -93,7 +92,7 @@ struct Record {
       return false;
     }
 
-    struct tm tm{};
+    struct tm tm {};
     if (strptime(publish_time.c_str(), "%Y/%m/%d %H:%M:%S", &tm) == nullptr) {
       ESP_LOGW(TAG, "Could not parse publish_time: %s", publish_time.c_str());
       return false;
@@ -115,7 +114,7 @@ struct Record {
     time_t publish_time_ts = publish_esp_time.timestamp;
 
     double diff_seconds = difftime(time.timestamp, publish_time_ts);
-    if (diff_seconds > (double)(minutes * 60)) {
+    if (diff_seconds > (double) (minutes * 60)) {
       ESP_LOGW(TAG, "Publish time is too old: %s", publish_time.c_str());
       return false;
     }
@@ -137,38 +136,15 @@ class MoenvAQI : public PollingComponent {
   void update() override;
   void dump_config() override;
 
-  void set_http_request(http_request::HttpRequestComponent *http_req) {
-    http_request_ = http_req;
-  }
+  void set_http_request(http_request::HttpRequestComponent *http_req) { http_request_ = http_req; }
 
-  template <typename V>
-  void set_api_key(V key) {
-    api_key_ = key;
-  }
-  template <typename V>
-  void set_site_name(V site_name) {
-    site_name_ = site_name;
-  }
-  template <typename V>
-  void set_language(V language) {
-    language_ = language;
-  }
-  template <typename V>
-  void set_limit(V limit) {
-    limit_ = limit;
-  }
-  template <typename V>
-  void set_sensor_expiry(V sensor_expiry) {
-    sensor_expiry_ = sensor_expiry;
-  }
-  template <typename V>
-  void set_retry_count(V retry_count) {
-    retry_count_ = retry_count;
-  }
-  template <typename V>
-  void set_retry_delay(V retry_delay) {
-    retry_delay_ = retry_delay;
-  }
+  template<typename V> void set_api_key(V key) { api_key_ = key; }
+  template<typename V> void set_site_name(V site_name) { site_name_ = site_name; }
+  template<typename V> void set_language(V language) { language_ = language; }
+  template<typename V> void set_limit(V limit) { limit_ = limit; }
+  template<typename V> void set_sensor_expiry(V sensor_expiry) { sensor_expiry_ = sensor_expiry; }
+  template<typename V> void set_retry_count(V retry_count) { retry_count_ = retry_count; }
+  template<typename V> void set_retry_delay(V retry_delay) { retry_delay_ = retry_delay; }
 
   void set_time(time::RealTimeClock *rtc) { rtc_ = rtc; }
 

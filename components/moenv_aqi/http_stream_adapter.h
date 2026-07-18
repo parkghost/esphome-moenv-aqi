@@ -23,12 +23,16 @@ class HttpStreamAdapter {
   static constexpr size_t MAX_STRING_LENGTH = 1024;
 
   explicit HttpStreamAdapter(std::shared_ptr<http_request::HttpContainer> container,
-                             size_t buffer_size = DEFAULT_BUFFER_SIZE,
-                             uint32_t timeout_ms = 10000)
-      : container_(std::move(container)), total_bytes_read_(0), eof_(false),
-        timeout_ms_(timeout_ms), last_data_time_(millis()) {
-    if (buffer_size < MIN_BUFFER_SIZE) buffer_size = MIN_BUFFER_SIZE;
-    if (buffer_size > MAX_BUFFER_SIZE) buffer_size = MAX_BUFFER_SIZE;
+                             size_t buffer_size = DEFAULT_BUFFER_SIZE, uint32_t timeout_ms = 10000)
+      : container_(std::move(container)),
+        total_bytes_read_(0),
+        eof_(false),
+        timeout_ms_(timeout_ms),
+        last_data_time_(millis()) {
+    if (buffer_size < MIN_BUFFER_SIZE)
+      buffer_size = MIN_BUFFER_SIZE;
+    if (buffer_size > MAX_BUFFER_SIZE)
+      buffer_size = MAX_BUFFER_SIZE;
     buf_.resize(buffer_size);
     read_pos_ = 0;
     write_pos_ = 0;
@@ -46,8 +50,10 @@ class HttpStreamAdapter {
       total_bytes_read_++;
       return byte;
     }
-    if (eof_) return -1;
-    if (!fill_buffer_()) return -1;
+    if (eof_)
+      return -1;
+    if (!fill_buffer_())
+      return -1;
     if (read_pos_ < write_pos_) {
       uint8_t byte = buf_[read_pos_++];
       total_bytes_read_++;
@@ -61,8 +67,10 @@ class HttpStreamAdapter {
     if (read_pos_ < write_pos_) {
       return buf_[read_pos_];
     }
-    if (eof_) return -1;
-    if (!fill_buffer_()) return -1;
+    if (eof_)
+      return -1;
+    if (!fill_buffer_())
+      return -1;
     if (read_pos_ < write_pos_) {
       return buf_[read_pos_];
     }
@@ -70,15 +78,11 @@ class HttpStreamAdapter {
   }
 
   /// Returns number of bytes available in buffer (does not query underlying stream).
-  int available() {
-    return static_cast<int>(write_pos_ - read_pos_);
-  }
+  int available() { return static_cast<int>(write_pos_ - read_pos_); }
 
   /// Search for target string in stream. Consumes all bytes up to and including target.
   /// Returns true if found, false if EOF reached.
-  bool find(const char *target) {
-    return findUntil(target, nullptr);
-  }
+  bool find(const char *target) { return findUntil(target, nullptr); }
 
   /// Read bytes until terminator is found. Returns accumulated string (excluding terminator).
   std::string readStringUntil(char terminator) {
@@ -87,11 +91,11 @@ class HttpStreamAdapter {
 
     int c;
     while ((c = read()) != -1) {
-      if (static_cast<char>(c) == terminator) break;
+      if (static_cast<char>(c) == terminator)
+        break;
       result += static_cast<char>(c);
       if (result.length() > MAX_STRING_LENGTH) {
-        ESP_LOGW(TAG, "readStringUntil('%c') exceeded %zu chars, truncating",
-                 terminator, MAX_STRING_LENGTH);
+        ESP_LOGW(TAG, "readStringUntil('%c') exceeded %zu chars, truncating", terminator, MAX_STRING_LENGTH);
         break;
       }
     }
@@ -101,7 +105,8 @@ class HttpStreamAdapter {
   /// Search for target but stop if terminator is found first.
   /// Returns true if target found before terminator.
   bool findUntil(const char *target, const char *terminator) {
-    if (!target || !*target) return true;
+    if (!target || !*target)
+      return true;
     size_t target_len = strlen(target);
     size_t term_len = terminator ? strlen(terminator) : 0;
     size_t target_match = 0;
@@ -109,17 +114,20 @@ class HttpStreamAdapter {
 
     while (true) {
       int c = read();
-      if (c == -1) return false;
+      if (c == -1)
+        return false;
       char ch = static_cast<char>(c);
 
       // Check target match
       if (ch == target[target_match]) {
         target_match++;
-        if (target_match == target_len) return true;
+        if (target_match == target_len)
+          return true;
       } else {
         if (target_match > 0) {
           target_match = 0;
-          if (ch == target[0]) target_match = 1;
+          if (ch == target[0])
+            target_match = 1;
         }
       }
 
@@ -127,11 +135,13 @@ class HttpStreamAdapter {
       if (term_len > 0) {
         if (ch == terminator[term_match]) {
           term_match++;
-          if (term_match == term_len) return false;  // Terminator found first
+          if (term_match == term_len)
+            return false;  // Terminator found first
         } else {
           if (term_match > 0) {
             term_match = 0;
-            if (ch == terminator[0]) term_match = 1;
+            if (ch == terminator[0])
+              term_match = 1;
           }
         }
       }
@@ -157,15 +167,15 @@ class HttpStreamAdapter {
       read_pos_ = 0;
       space = buf_.size() - write_pos_;
     }
-    if (space == 0) return write_pos_ > read_pos_;
+    if (space == 0)
+      return write_pos_ > read_pos_;
 
     while (true) {
       App.feed_wdt();
       yield();
       int bytes_read = container_->read(buf_.data() + write_pos_, space);
-      auto result = http_request::http_read_loop_result(
-          bytes_read, last_data_time_, timeout_ms_,
-          container_->is_read_complete());
+      auto result =
+          http_request::http_read_loop_result(bytes_read, last_data_time_, timeout_ms_, container_->is_read_complete());
 
       switch (result) {
         case http_request::HttpReadLoopResult::DATA:
