@@ -1,5 +1,7 @@
 #include "moenv_aqi.h"
 
+#include <cinttypes>
+
 #include <ArduinoJson.h>
 #include <esp_random.h>
 
@@ -77,10 +79,10 @@ void MoenvAQI::dump_config() {
   ESP_LOGCONFIG(TAG, "  API Key: %s", api_key_.value().empty() ? "not set" : "set");
   ESP_LOGCONFIG(TAG, "  Site Name: %s", site_name_.value().c_str());
   ESP_LOGCONFIG(TAG, "  Language: %s", language_.value().c_str());
-  ESP_LOGCONFIG(TAG, "  Limit: %u", limit_.value());
-  ESP_LOGCONFIG(TAG, "  Sensor Expired: %u minutes", sensor_expiry_.value() / 1000 / 60);
-  ESP_LOGCONFIG(TAG, "  Retry Count: %u", retry_count_.value());
-  ESP_LOGCONFIG(TAG, "  Retry Delay: %u ms", retry_delay_.value());
+  ESP_LOGCONFIG(TAG, "  Limit: %" PRIu32, limit_.value());
+  ESP_LOGCONFIG(TAG, "  Sensor Expired: %" PRIu32 " minutes", sensor_expiry_.value() / 1000 / 60);
+  ESP_LOGCONFIG(TAG, "  Retry Count: %" PRIu32, retry_count_.value());
+  ESP_LOGCONFIG(TAG, "  Retry Delay: %" PRIu32 " ms", retry_delay_.value());
   LOG_UPDATE_INTERVAL(this);
 }
 
@@ -160,14 +162,14 @@ bool MoenvAQI::send_request_() {
     url += std::to_string(offset);
 
     ESP_LOGD(TAG, "Sending query: %s", url.c_str());
-    ESP_LOGD(TAG, "Before request: free heap:%u, max block:%u",
+    ESP_LOGD(TAG, "Before request: free heap:%" PRIu32 ", max block:%zu",
              esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
     App.feed_wdt();
 
     auto container = this->http_request_->get(url);
 
-    ESP_LOGD(TAG, "After request: free heap:%u, max block:%u",
+    ESP_LOGD(TAG, "After request: free heap:%" PRIu32 ", max block:%zu",
              esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
@@ -191,7 +193,7 @@ bool MoenvAQI::send_request_() {
 
     container->end();
 
-    ESP_LOGD(TAG, "After json parse: free heap:%u, max block:%u",
+    ESP_LOGD(TAG, "After json parse: free heap:%" PRIu32 ", max block:%zu",
              esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
@@ -263,7 +265,7 @@ void MoenvAQI::try_send_request_(uint32_t attempt) {
     uint32_t jitter = esp_random() % 1000;
     uint32_t total_delay = std::min(backoff_delay + jitter, static_cast<uint32_t>(30000));
 
-    ESP_LOGW(TAG, "Request failed (attempt %u/%u), retrying in %u ms",
+    ESP_LOGW(TAG, "Request failed (attempt %" PRIu32 "/%" PRIu32 "), retrying in %" PRIu32 " ms",
              attempt + 1, retry_count + 1, total_delay);
 
     this->retry_in_progress_ = true;
@@ -286,7 +288,7 @@ void MoenvAQI::try_send_request_(uint32_t attempt) {
     }
   }
 
-  ESP_LOGE(TAG, "Request failed after %u attempts", retry_count_.value() + 1);
+  ESP_LOGE(TAG, "Request failed after %" PRIu32 " attempts", retry_count_.value() + 1);
   ESP_LOGD(TAG, "Saving last_successful_offset_: %u", this->last_successful_offset_);
   this->pref_.save(&this->last_successful_offset_);
   this->publish_states_();
